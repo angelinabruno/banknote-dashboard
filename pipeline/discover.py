@@ -5,6 +5,7 @@ Run after fetch.py:  python pipeline/discover.py > discovery.txt
 
 import json
 import pathlib
+import re
 
 import pandas as pd
 
@@ -28,10 +29,28 @@ for key, src in SOURCES.items():
             print(f"rows {len(data)}  {data.index.min():%Y-%m} .. {data.index.max():%Y-%m}")
             print(meta[[c for c in ["Title", "Units", "Frequency"] if c in meta]].to_string())
         elif src["kind"] == "workbook":
-            book = pd.read_excel(path, sheet_name=None, header=None)
+            book = pd.read_excel(path, sheet_name=None, header=None, nrows=14)
             for name, df in book.items():
-                print(f"--- sheet {name!r} shape {df.shape}")
-                print(df.head(14).to_string())
+                print(f"--- sheet {name!r} (first rows)")
+                print(df.to_string())
+        elif src["kind"] == "zip":
+            import zipfile
+            z = zipfile.ZipFile(path)
+            names = z.namelist()
+            print(f"{len(names)} files, e.g.", [n for n in names if n.endswith(".csv")][:6])
+            for n in names:
+                if re.search(r"G0[12][^0-9]", n) and n.endswith(".csv"):
+                    df = pd.read_csv(z.open(n), nrows=3)
+                    print(f"--- {n} {df.shape[1]} columns")
+                    print(", ".join(df.columns))
+        elif src["kind"] == "geojson":
+            g = json.loads(path.read_text())
+            feats = g.get("features", [])
+            print(f"{len(feats)} features; properties:", feats[0]["properties"] if feats else g)
+        elif src["kind"] == "json":
+            j = json.loads(path.read_text())
+            feats = j.get("features", [])
+            print(f"{len(feats)} records; exceededTransferLimit={j.get('exceededTransferLimit')}; first:", feats[:2] if feats else str(j)[:500])
         else:
             print(path.read_text()[:3000])
     except Exception as e:  # noqa: BLE001

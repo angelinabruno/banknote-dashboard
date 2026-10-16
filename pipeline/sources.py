@@ -94,4 +94,45 @@ SOURCES = {
         "title": "ABS Estimated Resident Population, Australia (quarterly)",
         "page": "https://www.abs.gov.au/statistics/people/population/national-state-and-territory-population",
     },
+
+    # ---------------------------------------------------------------- Regions tab
+    # SA4 boundaries (2021 ASGS), simplified on the server to keep the map light
+    "sa4_geo": {
+        "url": "https://geo.abs.gov.au/arcgis/rest/services/ASGS2021/SA4/MapServer/0/query"
+               "?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326"
+               "&maxAllowableOffset=0.01&geometryPrecision=3&f=geojson",
+        "kind": "geojson",
+        "ext": ".geojson",
+        "title": "ABS ASGS 2021 Statistical Areas Level 4 (boundaries)",
+        "page": "https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs-edition-3/jul2021-jun2026",
+    },
+    # 2021 Census General Community Profile for every SA4 (G01 person characteristics, G02 medians)
+    "census_sa4": {
+        "url": "https://www.abs.gov.au/census/find-census-data/datapacks/download/2021_GCP_SA4_for_AUS_short-header.zip",
+        "find_link": {"page": "https://www.abs.gov.au/census/find-census-data/datapacks",
+                      "pattern": r"[^\"']*2021_GCP_SA4_for_AUS_short-header\.zip"},
+        "kind": "zip",
+        "ext": ".zip",
+        "title": "ABS 2021 Census General Community Profile, SA4 (DataPack)",
+        "page": "https://www.abs.gov.au/census/find-census-data/datapacks",
+    },
+    # SEIFA 2021 by SA2 (aggregated to SA4, weighted by population)
+    "seifa_sa2": {
+        "url": "https://geo.abs.gov.au/arcgis/rest/services/Hosted/ABS_Socio_Economic_Indexes_for_Areas_SEIFA_by_2021_SA2/FeatureServer/0/query"
+               "?where=1%3D1&outFields=sa2_code_2021,sa2_name_2021,urp,irsd_score,irsd_aus_decile,irsad_score&returnGeometry=false&f=json",
+        "kind": "json",
+        "ext": ".json",
+        "title": "ABS Socio-Economic Indexes for Areas (SEIFA) 2021, by SA2",
+        "page": "https://www.abs.gov.au/statistics/people/people-and-communities/socio-economic-indexes-areas-seifa-australia/2021",
+    },
+    # Every bank branch, ATM and other point of presence, with location (annual, published each October)
+    "apra_pop": {
+        "url": "https://www.apra.gov.au/system/files/2026-10/Authorised%20deposit-taking%20institutions%27%20points%20of%20presence%20June%202017%20to%20June%202026.xlsx",
+        "find_link": {"page": "https://www.apra.gov.au/authorised-deposit-taking-institutions-points-of-presence-statistics",
+                      "pattern": r"[^\"']*points(?:%20| )of(?:%20| )presence[^\"']*\.xlsx"},
+        "kind": "workbook",
+        "ext": ".xlsx",
+        "title": "APRA Authorised deposit-taking institutions' points of presence (branches and ATMs)",
+        "page": "https://www.apra.gov.au/authorised-deposit-taking-institutions-points-of-presence-statistics",
+    },
 }

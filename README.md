@@ -2,7 +2,7 @@
 
 An interactive dashboard covering the demand for, use of, access to and integrity of Australia's banknotes. It is built from Reserve Bank of Australia (RBA) statistical tables, the RBA Consumer Payments Survey and ABS population data.
 
-**Tabs:** Overview · Demand · Use · Access · Integrity · Outlook (scenarios and the $5 redesign) · Sources and methods
+**Tabs:** Overview · Demand · Use · Access · Integrity · Outlook (scenarios and the $5 redesign) · Regions (map and printable regional briefs) · Sources and methods
 
 ## Refreshing the data (one click)
 
@@ -23,6 +23,7 @@ pipeline/sources.py   every external file the dashboard uses (URLs in one place)
 pipeline/fetch.py     downloads them to data/raw/ and records status in data/raw/manifest.json
 pipeline/rba.py       parser for the RBA's standard statistical-table layout
 pipeline/build.py     finds the right series, derives measures, writes docs/data/dashboard.json
+pipeline/regions.py   builds the Regions tab: Census, SEIFA and APRA branch/ATM data by SA4, plus the map
 pipeline/discover.py  lists every series in every table (written to data/discovery.txt)
 data/manual/          hand-entered figures: Consumer Payments Survey results and program milestones
 data/clean/           one tidy CSV per series, for use in Excel or elsewhere
@@ -49,5 +50,7 @@ python -m http.server -d docs 8000   # then open http://localhost:8000
 - RBA Consumer Payments Survey (Research Discussion Paper 2023-08; Bulletin, April and May 2026)
 - RBA media releases on the Next Generation Banknote program and the $5 redesign
 - ABS Estimated Resident Population (Data API)
+- ABS 2021 Census General Community Profile (SA4 DataPack), SEIFA 2021 (by SA2) and ASGS 2021 SA4 boundaries
+- APRA Authorised deposit-taking institutions' points of presence (every bank branch and ATM, by location)
 
 This is an independent analysis of public data, not an official RBA publication.

@@ -8,6 +8,8 @@ shown on the dashboard's sources page.
 import datetime as dt
 import json
 import pathlib
+import re
+import urllib.parse
 import sys
 import time
 import urllib.request
@@ -38,6 +40,30 @@ def download(url, dest, attempts=3):
     raise last
 
 
+def resolve_url(src):
+    """Use the newest matching link on a landing page when one is configured.
+
+    Some publishers (APRA, the ABS DataPacks page) put a date in the file name,
+    so the link is looked up on each refresh and the configured URL is the fallback.
+    """
+    finder = src.get("find_link")
+    if not finder:
+        return src["url"]
+    try:
+        req = urllib.request.Request(finder["page"], headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=60) as r:
+            html = r.read().decode("utf-8", "replace")
+        links = re.findall(finder["pattern"], html, flags=re.I)
+        if links:
+            # Newest first: file names carry dates, so sort descending.
+            link = sorted(set(links), reverse=True)[0].replace("&amp;", "&")
+            return urllib.parse.urljoin(finder["page"], link)
+        print(f"      no link matching {finder['pattern']!r} on {finder['page']}; using configured URL")
+    except Exception as e:  # noqa: BLE001
+        print(f"      link lookup failed ({e}); using configured URL")
+    return src["url"]
+
+
 def main():
     RAW.mkdir(parents=True, exist_ok=True)
     manifest_path = RAW / "manifest.json"
@@ -45,12 +71,13 @@ def main():
     now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     failures = 0
     for key, src in SOURCES.items():
-        ext = pathlib.Path(src["url"].split("?")[0]).suffix or ".csv"
+        ext = src.get("ext") or pathlib.Path(src["url"].split("?")[0]).suffix or ".csv"
         dest = RAW / f"{key}{ext}"
+        url = resolve_url(src)
         entry = manifest.get(key, {})
-        entry.update({"url": src["url"], "file": dest.name, "last_attempt": now})
+        entry.update({"url": url, "file": dest.name, "last_attempt": now})
         try:
-            size = download(src["url"], dest)
+            size = download(url, dest)
             entry.update({"ok": True, "last_success": now, "bytes": size, "error": None})
             print(f"ok    {key:14} {size:>9,} bytes")
         except Exception as e:  # noqa: BLE001

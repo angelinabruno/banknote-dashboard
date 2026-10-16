@@ -1,4 +1,5 @@
 import { lineChart, columnChart, sparkline } from "./charts.js";
+import { regionsPanel } from "./regions.js";
 
 // ---------- formatting ----------
 const DENOMS = ["5", "10", "20", "50", "100"];
@@ -455,6 +456,7 @@ const PANELS = [
   ["access", "Access", "Whether people can still get cash easily: ATM withdrawals and the network that supports them.", access],
   ["integrity", "Integrity", "Counterfeiting rates, a key measure of trust in the currency.", integrity],
   ["outlook", "Outlook", "Where demand for banknotes could go, and the programs shaping the future of the note series.", outlook],
+  ["regions", "Regions", "Census and banking statistics for each of Australia's 88 SA4 regions, with a printable brief for any region you're visiting.", regionsPanel],
   ["sources", "Sources and methods", "Where every number comes from, when it was last refreshed, and how it was calculated.", sources],
 ];
 
@@ -464,8 +466,8 @@ function setTab(id, push = true) {
     $(`#tab-${pid}`).tabIndex = pid === id ? 0 : -1;
     $(`#panel-${pid}`).classList.toggle("active", pid === id);
   }
-  $(".filters").hidden = ["sources", "outlook", "overview"].includes(id);
-  if (push) history.replaceState(null, "", `#${id}`);
+  $(".filters").hidden = ["sources", "outlook", "overview", "regions"].includes(id);
+  if (push && !location.hash.startsWith(`#${id}/`)) history.replaceState(null, "", `#${id}`);
 }
 
 async function main() {
@@ -488,7 +490,8 @@ async function main() {
     const p = h("section", { class: "panel", id: `panel-${id}`, role: "tabpanel", "aria-labelledby": `tab-${id}` },
       h("h2", { text: label }), h("p", { class: "lede", text: lede }));
     main.append(p);
-    try { fn(p); } catch (e) { console.error(e); p.append(h("p", { class: "empty", text: "This section couldn't be built from the latest data." })); }
+    const fail = (e) => { console.error(e); p.append(h("p", { class: "empty", text: "This section couldn't be built from the latest data." })); };
+    try { Promise.resolve(fn(p)).catch(fail); } catch (e) { fail(e); }
   }
   nav.addEventListener("keydown", (e) => {
     const ids = PANELS.map((x) => x[0]);
@@ -508,7 +511,7 @@ async function main() {
     });
   }
 
-  const initial = location.hash.slice(1);
+  const initial = location.hash.slice(1).split("/")[0];
   setTab(PANELS.some((x) => x[0] === initial) ? initial : "overview", false);
 }
 
