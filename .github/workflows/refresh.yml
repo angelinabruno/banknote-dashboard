@@ -1,0 +1,75 @@
+name: Refresh data and publish
+
+# One click: Actions tab -> "Refresh data and publish" -> Run workflow.
+# Also runs every Monday morning (Sydney time) and whenever code is pushed.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 21 * * 0"   # 21:00 UTC Sunday = Monday 7-8am in Sydney
+  push:
+    branches: [main]
+    paths-ignore: ["data/**", "docs/data/**", "README.md"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Download sources (RBA, ABS)
+        run: python pipeline/fetch.py
+
+      - name: Describe downloaded tables
+        run: python pipeline/discover.py > data/discovery.txt
+
+      - name: Build dashboard data
+        run: |
+          if [ -f pipeline/build.py ]; then python pipeline/build.py; else echo "build.py not written yet"; fi
+
+      - name: Commit refreshed data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898+github-actions[bot]@users.noreply.github.com"
+          git add data docs/data
+          if git diff --cached --quiet; then
+            echo "No data changes."
+          else
+            git commit -m "Refresh data $(date -u +%Y-%m-%d)"
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+        continue-on-error: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Summary
+        run: |
+          echo "### Refresh complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "Dashboard: ${{ steps.deploy.outputs.page_url || 'Pages not enabled yet (Settings > Pages > Source: GitHub Actions)' }}" >> "$GITHUB_STEP_SUMMARY"
+          python -c "import json;m=json.load(open('data/raw/manifest.json'));[print(f\"- {k}: {'ok' if v['ok'] else 'FAILED ' + str(v['error'])}\") for k,v in m.items()]" >> "$GITHUB_STEP_SUMMARY"
