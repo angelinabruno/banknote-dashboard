@@ -262,6 +262,9 @@ def main():
     df = df[~df.get("name", pd.Series(dtype=str)).astype(str).str.contains("Migratory|No usual address", case=False, na=False)]
     if "population" in df:
         df = df[df["population"].fillna(0) > 0]
+    if meta:
+        # Census also has "migratory" and "no usual address" pseudo-regions with no boundary.
+        df = df[df["name"].notna()]
 
     metrics = [{"id": i, "label": l, "unit": u, "format": f, "description": d, "cash": c}
                for i, l, u, f, d, c in METRICS if i in df.columns and df[i].notna().any()]

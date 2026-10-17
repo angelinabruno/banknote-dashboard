@@ -467,7 +467,7 @@ const PANELS = [
   ["access", "Access", "Whether people can still get cash easily: ATM withdrawals and the network that supports them.", access],
   ["integrity", "Integrity", "Counterfeiting rates, a key measure of trust in the currency.", integrity],
   ["outlook", "Outlook", "Where demand for banknotes could go, and the programs shaping the future of the note series.", outlook],
-  ["regions", "Regions", "Census and banking statistics for each of Australia's 88 SA4 regions, with a printable brief for any region you're visiting.", regionsPanel],
+  ["regions", "Regions", "Census and banking statistics for each of Australia's SA4 regions, with a printable brief for any region you're visiting.", regionsPanel],
   ["sources", "Sources and methods", "Where every number comes from, when it was last refreshed, and how it was calculated.", sources],
 ];
 
