@@ -18,6 +18,7 @@ const fmt = {
   compact: (v) => new Intl.NumberFormat("en-AU", { notation: "compact", maximumFractionDigits: 1 }).format(v),
 };
 const monthYear = (t) => new Date(t).toLocaleDateString("en-AU", { month: "long", year: "numeric", timeZone: "UTC" });
+const quarterName = (t) => { const d = new Date(t); return `${["March", "June", "September", "December"][Math.floor(d.getUTCMonth() / 3)]} quarter ${d.getUTCFullYear()}`; };
 const parseDate = (s) => Date.parse(`${s}T00:00:00Z`);
 
 // ---------- data ----------
@@ -182,7 +183,7 @@ function overview(p) {
     tile({ label: "Banknotes on issue as share of GDP", value: gdp ? fmt.pct1(gdp[1]) : null, note: gdp ? `As at ${monthYear(gdp[0])}` : null }),
     tile({ label: "Cash share of consumer payments", value: cps ? `${cps.cash_share_number_pct}%` : null, note: cps ? `By number, ${cps.year} Consumer Payments Survey` : null }),
     tile({ label: "ATM cash withdrawals, monthly value", value: atm ? fmt.bn(atm[1]) : null, delta: deltaNode(atmYoy, "over the year") }),
-    tile({ label: "Counterfeits detected", value: ppm ? `${nf(0).format(ppm[1])} ppm` : null, note: ppm ? `Parts per million notes in circulation, ${new Date(ppm[0]).getUTCFullYear()}` : null }),
+    tile({ label: "Counterfeits detected", value: ppm ? `${nf(0).format(ppm[1])} ppm` : null, note: ppm ? `Per million genuine notes, ${quarterName(ppm[0])}` : null }),
     tile({ label: "Next banknote milestone", value: "$5 redesign", note: "Theme: Connection to Country. See Outlook." }),
   );
   p.append(takeaways(overviewTakeaways()), g);
@@ -230,11 +231,15 @@ function demand(p) {
   });
   const latestShare = (d) => shareSeries.find((s) => s.label === `$${d}`)?.points.at(-1)?.[1];
   const big = (latestShare(50) ?? 0) + (latestShare(100) ?? 0);
+  const top = DENOMS.map((d) => [d, latestShare(d) ?? 0]).sort((a, b) => b[1] - a[1])[0];
   const yoy = S("notes_value_yoy") ? pts("notes_value_yoy") : null;
   const lastYoy = yoy?.at(-1);
+  const covidPeak = (yoy ?? []).filter(([t]) => t >= Date.UTC(2020, 0, 1) && t < Date.UTC(2022, 0, 1)).reduce((a, b) => (b[1] > (a?.[1] ?? -Infinity) ? b : a), null);
+  const m1 = last("currency_pct_m1"), m1Start = pts("currency_pct_m1")[0];
   p.append(takeaways([
-    big && `$50 and $100 notes make up ${nf(0).format(big)}% of the value on issue. The $50 is the workhorse, while the $100 has grown fastest, consistent with notes being hoarded rather than spent.`,
-    lastYoy && `Annual growth in the value on issue is ${nf(1).format(lastYoy[1])}% (${monthYear(lastYoy[0])}), well below the peak during the pandemic when precautionary demand surged.`,
+    big && top && `$50 and $100 notes make up ${nf(0).format(big)}% of the value on issue, and the $${top[0]} is now the largest single denomination by value (${nf(0).format(top[1])}%). High-value notes dominating the stock is consistent with notes being held as a store of value rather than spent.`,
+    lastYoy && covidPeak && `Annual growth in the value on issue is ${nf(1).format(lastYoy[1])}% (${monthYear(lastYoy[0])}), down from a pandemic peak of ${nf(1).format(covidPeak[1])}% in ${monthYear(covidPeak[0])}.`,
+    m1 && m1Start && `Physical currency has shrunk from ${nf(0).format(m1Start[1])}% of narrow money (M1) in ${new Date(m1Start[0]).getUTCFullYear()} to ${nf(1).format(m1[1])}% today, as everyday money has moved into bank deposits.`,
     "Spikes in demand coincide with periods of stress (the 2008 financial crisis, the 2020 pandemic and bushfires), so supply planning has to cover sudden precautionary demand as well as the long-run trend.",
   ]));
   const g = h("div", { class: "grid" });
@@ -244,7 +249,7 @@ function demand(p) {
     lineCard({ span: 12, title: "Value of banknotes on issue", sub: "$ billion, end of month", source: "RBA A6", format: fmt.bnTick, area: true, annotations: [gfc, covid], series: [{ label: "All denominations", color: "s1", points: pts("notes_value_total") }] }),
     lineCard({ span: 6, title: "Value on issue by denomination", sub: "$ billion", source: "RBA A6", format: fmt.bnTick, series: denomSeries("notes_value") }),
     lineCard({ span: 6, title: "Share of value by denomination", sub: "Per cent of total value on issue", source: "RBA A6", format: fmt.pct, series: shareSeries }),
-    lineCard({ span: 6, title: "Number of banknotes on issue by denomination", sub: "Million notes", source: "RBA A6", format: fmt.mil, series: denomSeries("notes_count") }),
+    lineCard({ span: 6, title: "Currency as a share of narrow money", sub: "Currency held by the public as a per cent of M1", source: "RBA D3", format: fmt.pct, series: [{ label: "Currency share of M1", color: "s1", points: pts("currency_pct_m1") }] }),
     lineCard({ span: 6, title: "Annual growth in value on issue", sub: "Year-ended percentage change", source: "RBA A6", format: fmt.pct, yZero: true, annotations: [gfc, covid], series: [{ label: "Growth", color: "s1", points: pts("notes_value_yoy") }] }),
     lineCard({ span: 6, title: "Banknotes on issue relative to the economy", sub: "Per cent of annual nominal GDP", source: "RBA A6, H1", format: fmt.pct, series: [{ label: "Share of GDP", color: "s1", points: pts("notes_value_pct_gdp") }] }),
     lineCard({ span: 6, title: "Banknotes on issue per person", sub: "Dollars per resident", source: "RBA A6, ABS", format: fmt.dollars, series: [{ label: "Per person", color: "s1", points: pts("notes_value_per_capita") }] }),
@@ -297,19 +302,20 @@ function use(p) {
 function access(p) {
   const n10 = change("atm_withdrawals_number", 10);
   const avg = last("atm_avg_withdrawal");
-  const atms = last("atm_count");
-  const atmPeak = pts("atm_count").reduce((a, b) => (b[1] > (a?.[1] ?? -1) ? b : a), null);
+  const br = pts("branch_count_adi"), atmA = pts("atm_count_adi");
   p.append(takeaways([
     n10 != null && `The number of ATM withdrawals has fallen ${nf(0).format(Math.abs(n10))}% over the past decade.`,
     avg && `People withdraw less often but in larger amounts: the average withdrawal is now ${fmt.dollars(avg[1])}.`,
-    atms && atmPeak && `There are about ${fmt.compact(atms[1])} ATMs, down from a peak of ${fmt.compact(atmPeak[1])} in ${new Date(atmPeak[0]).getUTCFullYear()}. Shrinking infrastructure raises the cost of cash for remaining users and is a key risk for regional communities.`,
+    br.length > 1 && `Bank and other ADI branches fell from ${fmt.num(br[0][1])} in ${new Date(br[0][0]).getUTCFullYear()} to ${fmt.num(br.at(-1)[1])} in ${new Date(br.at(-1)[0]).getUTCFullYear()}, a ${nf(0).format((1 - br.at(-1)[1] / br[0][1]) * 100)}% drop. Branches are where many people deposit cash, so this matters most outside the cities.`,
+    atmA.length > 1 && `Bank-operated ATMs fell from ${fmt.num(atmA[0][1])} to ${fmt.num(atmA.at(-1)[1])} over the same period. Part of this reflects banks selling ATM fleets to independent operators rather than machines disappearing, so it overstates the loss of access.`,
   ]));
   const g = h("div", { class: "grid" });
   g.append(
     lineCard({ span: 6, title: "ATM cash withdrawals, number", sub: "Million per month, seasonally adjusted", source: "RBA C4", format: fmt.mil, series: [{ label: "Withdrawals", color: "s1", points: pts("atm_withdrawals_number") }] }),
     lineCard({ span: 6, title: "ATM cash withdrawals, value", sub: "$ billion per month, seasonally adjusted", source: "RBA C4", format: (v) => `$${nf(1).format(v / 1000)}b`, series: [{ label: "Value", color: "s1", points: pts("atm_withdrawals_value") }] }),
     lineCard({ span: 6, title: "Average ATM withdrawal", sub: "Dollars", source: "RBA C4", format: fmt.dollars, yZero: false, series: [{ label: "Average", color: "s1", points: pts("atm_avg_withdrawal") }] }),
-    lineCard({ span: 6, title: "Number of ATMs", sub: "Terminals", source: "RBA C4.1, C8", format: (v) => fmt.compact(v), series: [{ label: "ATMs", color: "s1", points: pts("atm_count") }] }),
+    lineCard({ span: 6, title: "Number of ATMs", sub: "All operators to 2018 (RBA); bank-operated from 2017 (APRA). The two are defined differently.", source: "RBA C8, APRA", format: (v) => fmt.compact(v), series: [{ label: "All ATMs (RBA)", short: "All ATMs", color: "s1", points: pts("atm_count") }, { label: "Bank-operated ATMs (APRA)", short: "Bank ATMs", color: "s2", points: pts("atm_count_adi") }] }),
+    lineCard({ span: 6, title: "Number of bank branches", sub: "Bank branches to 2018 (RBA); branches of banks and other ADIs from 2017 (APRA)", source: "RBA C8, APRA", format: (v) => fmt.compact(v), series: [{ label: "Bank branches (RBA)", short: "RBA", color: "s1", points: pts("branch_count") }, { label: "ADI branches (APRA)", short: "APRA", color: "s2", points: pts("branch_count_adi") }] }),
   );
   p.append(g);
 }
@@ -318,19 +324,23 @@ function integrity(p) {
   const ppm = pts("counterfeit_ppm");
   const latest = ppm.at(-1);
   const peak = ppm.reduce((a, b) => (b[1] > (a?.[1] ?? -1) ? b : a), null);
+  const yearAgo = latest ? valueAt("counterfeit_ppm", yearsAgo(latest[0], 1), 50) : null;
+  const topRate = DENOMS.map((d) => [d, last(`counterfeit_ppm_${d}`)?.[1] ?? -1]).sort((x, y) => y[1] - x[1])[0];
   const counts = DENOMS.map((d) => last(`counterfeit_count_${d}`));
   const anyCounts = counts.some(Boolean);
   const mostIdx = anyCounts ? counts.reduce((bi, c, i, arr) => ((c?.[1] ?? -1) > (arr[bi]?.[1] ?? -1) ? i : bi), 0) : -1;
   p.append(takeaways([
-    latest && `About ${nf(0).format(latest[1])} counterfeits were detected per million notes in circulation in the latest period, which is low by international standards.`,
-    peak && latest && peak[0] !== latest[0] && `The highest rate in the series was ${nf(0).format(peak[1])} ppm in ${new Date(peak[0]).getUTCFullYear()}.`,
-    mostIdx >= 0 && `The $${DENOMS[mostIdx]} is the most counterfeited note in the latest data, so it is where public education and retailer checks matter most.`,
+    latest && `The RBA recorded ${nf(0).format(latest[1])} counterfeits per million genuine banknotes in the ${quarterName(latest[0])}.`,
+    yearAgo && latest && Math.abs(latest[1] - yearAgo) >= 3 && `That is ${latest[1] > yearAgo ? "up" : "down"} from ${nf(0).format(yearAgo)} ppm a year earlier${latest[1] > yearAgo * 1.5 ? ", a sharp rise that warrants close monitoring" : ""}. The highest rate in the series was ${nf(0).format(peak[1])} ppm in ${new Date(peak[0]).getUTCFullYear()}.`,
+    topRate && `By rate, the $${topRate[0]} is the most targeted note (${nf(0).format(topRate[1])} counterfeits per million genuine $${topRate[0]} notes).`,
+    mostIdx >= 0 && `By number, the $${DENOMS[mostIdx]} is the most counterfeited note in the latest data, so it is where public education and retailer checks matter most.`,
     "Keeping counterfeiting low underpins public confidence, and it is the main argument for upgrading security features through programs like Next Generation Banknotes.",
   ]));
   const g = h("div", { class: "grid" });
   g.append(
     lineCard({ span: 12, title: "Counterfeits detected per million notes in circulation", sub: "Parts per million (ppm)", source: "RBA A7", format: fmt.num, series: [{ label: "All denominations", color: "s1", points: ppm }] }),
-    lineCard({ span: 12, title: "Counterfeits detected by denomination", sub: "Number of counterfeits", source: "RBA A7", format: fmt.num, series: denomSeries("counterfeit_count") }),
+    lineCard({ span: 12, title: "Counterfeits by denomination", sub: "Per million genuine banknotes of that denomination", source: "RBA A7", format: fmt.num, series: denomSeries("counterfeit_ppm") }),
+    lineCard({ span: 12, title: "Counterfeits detected by denomination", sub: "Number of counterfeits, as published in RBA table A7", source: "RBA A7", format: fmt.num, series: denomSeries("counterfeit_count") }),
   );
   p.append(g);
 }
@@ -438,7 +448,8 @@ function sources(p) {
       "Banknotes on issue: the value and number of Australian banknotes the RBA has issued that have not been returned, at the end of each month (RBA table A6). It includes notes held overseas and by banks.",
       "Share of GDP: value on issue divided by the sum of the latest four quarters of nominal GDP (RBA table H1).",
       "Per person: value on issue divided by the ABS estimated resident population for the nearest quarter.",
-      "Counterfeits: counterfeits detected per million banknotes in circulation, as published by the RBA (table A7). Detection depends on notes being found and reported.",
+      "Counterfeits: counterfeits detected per million genuine banknotes, as published quarterly by the RBA (table A7). Detection depends on notes being found and reported.",
+      "ATMs and branches: RBA table C8 (discontinued in 2018) counts all ATMs, including independent operators. APRA's points of presence data, from 2017, covers only ATMs and branches run by banks and other authorised deposit-taking institutions, so the two series are not directly comparable.",
       "ATM data: seasonally adjusted monthly withdrawals from RBA table C4, extended back with the discontinued C4 series where available. Average withdrawal is value divided by number.",
       "Consumer payments: shares of payments by number and value from the RBA Consumer Payments Survey, held every three years. These figures are entered by hand from RBA publications and listed in data/manual/consumer_payments_survey.csv.",
       "Scenarios: simple compound growth from the latest actual value. They show sensitivity to assumptions, not a forecast.",

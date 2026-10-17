@@ -80,7 +80,7 @@ function implications(r, nat, metrics) {
   if (has("pct_first_nations") && r.pct_first_nations > Math.max(8, nat.pct_first_nations * 2))
     out.push(`${FORMAT.pct(r.pct_first_nations)} of residents are Aboriginal and/or Torres Strait Islander, making the region relevant to $5 redesign engagement and to cash access in remote communities.`);
   if (has("atms_per_10k") && r.atms_per_10k < nat.atms_per_10k * 0.8)
-    out.push(`There are fewer ATMs per person than nationally (${FORMAT.dec1(r.atms_per_10k)} against ${FORMAT.dec1(nat.atms_per_10k)} per 10,000 people).`);
+    out.push(`There are fewer bank-operated ATMs per person than nationally (${FORMAT.dec1(r.atms_per_10k)} against ${FORMAT.dec1(nat.atms_per_10k)} per 10,000 people).`);
   if (has("branch_change") && r.branch_change < nat.branch_change - 5)
     out.push(`Bank branches have fallen faster than nationally since 2017 (${FORMAT.pct_signed(r.branch_change)} against ${FORMAT.pct_signed(nat.branch_change)}).`);
   if (has("pct_other_language") && r.pct_other_language > nat.pct_other_language * 1.3)

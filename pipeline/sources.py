@@ -110,7 +110,7 @@ SOURCES = {
     "census_sa4": {
         "url": "https://www.abs.gov.au/census/find-census-data/datapacks/download/2021_GCP_SA4_for_AUS_short-header.zip",
         "find_link": {"page": "https://www.abs.gov.au/census/find-census-data/datapacks",
-                      "pattern": r"[^\"']*2021_GCP_SA4_for_AUS_short-header\.zip"},
+                      "pattern": r"href=[\"']([^\"'\s>]*2021_GCP_SA4_for_AUS_short-header\.zip)"},
         "kind": "zip",
         "ext": ".zip",
         "title": "ABS 2021 Census General Community Profile, SA4 (DataPack)",
@@ -129,7 +129,7 @@ SOURCES = {
     "apra_pop": {
         "url": "https://www.apra.gov.au/system/files/2026-10/Authorised%20deposit-taking%20institutions%27%20points%20of%20presence%20June%202017%20to%20June%202026.xlsx",
         "find_link": {"page": "https://www.apra.gov.au/authorised-deposit-taking-institutions-points-of-presence-statistics",
-                      "pattern": r"[^\"']*points(?:%20| )of(?:%20| )presence[^\"']*\.xlsx"},
+                      "pattern": r"href=[\"']([^\"'>]*points(?:%20| )of(?:%20| )presence[^\"'>]*\.xlsx)"},
         "kind": "workbook",
         "ext": ".xlsx",
         "title": "APRA Authorised deposit-taking institutions' points of presence (branches and ATMs)",

@@ -36,9 +36,9 @@ METRICS = [
     ("pct_born_overseas", "Born overseas", "%", "pct", "Share of residents born outside Australia", None),
     ("pct_other_language", "Speak another language at home", "%", "pct", "Share of residents using a language other than English at home", "Relevant to public education on banknote security features."),
     ("median_rent", "Median rent", "$ a week", "dollars", "Median weekly rent", None),
-    ("atms_per_10k", "ATMs per 10,000 people", "per 10,000", "dec1", "Bank-reported ATMs (APRA), per 10,000 residents", "Fewer ATMs means harder access to cash."),
-    ("branches_per_10k", "Bank branches per 10,000 people", "per 10,000", "dec1", "Bank and other branches (APRA), per 10,000 residents", "Branches are a key way to deposit and withdraw cash."),
-    ("atm_change", "Change in ATMs since 2017", "%", "pct_signed", "Percentage change in bank-reported ATMs since June 2017", "Shrinking networks raise the cost and effort of using cash."),
+    ("atms_per_10k", "Bank-operated ATMs per 10,000 people", "per 10,000", "dec1", "ATMs run by banks and other ADIs (APRA), per 10,000 residents. Excludes independent ATM operators", "Fewer ATMs means harder access to cash."),
+    ("branches_per_10k", "Bank branches per 10,000 people", "per 10,000", "dec1", "Branches of banks and other ADIs (APRA), per 10,000 residents", "Branches are a key way to deposit and withdraw cash."),
+    ("atm_change", "Change in bank-operated ATMs since 2017", "%", "pct_signed", "Percentage change in bank-operated ATMs since June 2017. Partly reflects banks selling ATMs to independent operators", "Shrinking networks raise the cost and effort of using cash."),
     ("branch_change", "Change in branches since 2017", "%", "pct_signed", "Percentage change in branches since June 2017", "Shrinking networks raise the cost and effort of using cash."),
 ]
 
@@ -141,6 +141,7 @@ def load_seifa():
         print("  SEIFA empty")
         return None, None
     df["sa2"] = df["sa2_code_2021"].astype(str)
+    df["urp"] = pd.to_numeric(df["urp"], errors="coerce")
     df["code"] = df["sa2"].str[:3]
     df = df.dropna(subset=["irsd_score", "urp"])
     g = df.groupby("code")
@@ -150,68 +151,64 @@ def load_seifa():
            "pct_disadvantaged": df.loc[df["irsd_aus_decile"] <= 2, "urp"].sum() / df["urp"].sum() * 100}
     print(f"  SEIFA: {len(df)} SA2s -> {len(irsd)} SA4s")
     sa2_names = dict(zip(df["sa2_name_2021"].str.lower(), df["sa2"]))
-    return pd.DataFrame({"irsd": irsd, "pct_disadvantaged": dis}), (nat, sa2_names)
+    pop = df.groupby("code")["urp"].sum()
+    return pd.DataFrame({"irsd": irsd, "pct_disadvantaged": dis, "_pop_seifa": pop}), (nat, sa2_names)
 
 
 # ------------------------------------------------------------------ APRA points of presence
-def load_apra(sa2_names):
+def load_apra(sa4_names):
+    """Branches and ATMs per SA4 from APRA's raw listing (sheet 'Table 1').
+
+    Each row is one point of presence with its period, service channel type,
+    SA4 name and latitude/longitude.
+    """
     p = raw_path("apra_pop")
     if not p:
         print("  no APRA points of presence")
-        return None, None, None
+        return None, None, None, None
     book = pd.read_excel(p, sheet_name=None, header=None)
     listing = None
     for name, raw in book.items():
-        # Find the header row: the first row mentioning latitude.
         for i in range(min(40, len(raw))):
-            cells = raw.iloc[i].astype(str).str.lower()
-            if cells.str.contains("latitude").any():
+            cells = raw.iloc[i].astype(str).str.strip().str.lower()
+            if cells.eq("latitude").any():
                 df = raw.iloc[i + 1:].copy()
                 df.columns = [str(c).strip() for c in raw.iloc[i]]
                 if listing is None or len(df) > len(listing):
                     listing = df
-                    print(f"  APRA listing in sheet {name!r}: {len(df):,} rows; columns {list(df.columns)}")
+                    print(f"  APRA listing in sheet {name!r}: {len(df):,} rows")
                 break
     if listing is None:
         print("  APRA: no sheet with locations found")
-        return None, None, None
+        return None, None, None, None
 
     lat, lon = col(listing, r"latitude"), col(listing, r"longitude")
-    typ = col(listing, r".*(service|channel|point).*type.*", r".*type.*")
-    period = col(listing, r".*(period|reference date|date|year).*", required=False)
-    sa2c = col(listing, r"SA2.*code.*", r".*SA2.*(main|code).*", required=False)
-    sa2n = col(listing, r"SA2.*name.*", r"SA2.*", required=False)
-    df = listing.dropna(subset=[lat, lon]).copy()
-    if sa2c is not None and df[sa2c].astype(str).str.fullmatch(r"\d{9}(\.0)?").mean() > 0.5:
-        df["sa2"] = df[sa2c].astype(str).str.replace(r"\.0$", "", regex=True)
-    elif sa2n is not None:
-        df["sa2"] = df[sa2n].astype(str).str.lower().map(sa2_names or {})
-    else:
-        print("  APRA: no SA2 column")
-        return None, None, None
-    df["code"] = df["sa2"].astype(str).str[:3]
-    t = df[typ].astype(str).str.lower()
+    typ = col(listing, r"service channel type", r".*type.*")
+    period = col(listing, r"period", r".*date.*")
+    sa4n = col(listing, r"SA4 name", r".*SA4.*")
+    df = listing.dropna(subset=[lat, lon, period]).copy()
+    norm = lambda x: re.sub(r"[^a-z0-9]", "", str(x).lower())
+    lookup = {norm(n): c for n, c in sa4_names.items()}
+    df["code"] = df[sa4n].map(lambda x: lookup.get(norm(x)))
+    unmatched = df.loc[df["code"].isna(), sa4n].unique()
+    if len(unmatched):
+        print(f"  APRA: {len(unmatched)} SA4 names not matched, e.g. {list(unmatched)[:5]}")
+    t = df[typ].astype(str).str.strip().str.lower()
     df["kind"] = None
     df.loc[t.str.contains("atm"), "kind"] = "atm"
-    df.loc[t.str.contains("branch") & ~t.str.contains("atm"), "kind"] = "branch"
-    print("  APRA service types:", df[typ].value_counts().head(10).to_dict())
-
-    if period is not None:
-        df["_p"] = pd.to_datetime(df[period], errors="coerce")
-        if df["_p"].isna().all():
-            df["_p"] = df[period].astype(str)
-        latest, first = df["_p"].max(), df["_p"].min()
-        now = df[df["_p"] == latest]
-        then = df[df["_p"] == first]
-        print(f"  APRA periods {first} .. {latest}")
-    else:
-        now, then = df, None
-
+    df.loc[t.eq("branch") | t.eq("branches"), "kind"] = "branch"
+    print("  APRA service types:", df[typ].value_counts().to_dict())
+    df["_p"] = pd.to_datetime(df[period], errors="coerce")
+    latest, first = df["_p"].max(), df["_p"].min()
+    print(f"  APRA periods {first:%Y-%m} .. {latest:%Y-%m}")
+    now, then = df[df["_p"] == latest], df[df["_p"] == first]
     counts = now.groupby(["code", "kind"]).size().unstack(fill_value=0)
-    base = then.groupby(["code", "kind"]).size().unstack(fill_value=0) if then is not None and len(then) else None
-    pts = [[round(float(r[lon]), 4), round(float(r[lat]), 4), r["kind"], r["code"]]
-           for _, r in now[now["kind"].notna()].iterrows()]
-    return counts, base, pts
+    base = then.groupby(["code", "kind"]).size().unstack(fill_value=0)
+    national = df.groupby(["_p", "kind"]).size().unstack(fill_value=0)
+    national.index.name = "date"
+    pts = [[round(float(a), 4), round(float(b), 4), k, c]
+           for a, b, k, c in now.loc[now["kind"].notna(), [lon, lat, "kind", "code"]].itertuples(index=False)]
+    return counts, base, pts, national
 
 
 # ------------------------------------------------------------------ assemble
@@ -220,8 +217,11 @@ def main():
     geo, meta = load_geo()
     census = load_census()
     seifa, extra = load_seifa()
-    nat_seifa, sa2_names = extra if extra else ({}, {})
-    counts, base, pts = load_apra(sa2_names)
+    nat_seifa = extra[0] if extra else {}
+    counts, base, pts, apra_national = load_apra({v["name"]: k for k, v in (meta or {}).items()})
+    if apra_national is not None:
+        CLEAN.mkdir(parents=True, exist_ok=True)
+        apra_national.to_csv(CLEAN / "apra_points_of_presence_national.csv")
 
     codes = sorted(set(meta or {}) | set(census.index if census is not None else []))
     df = pd.DataFrame(index=pd.Index(codes, name="code"))
@@ -232,6 +232,10 @@ def main():
         df = df.join(census)
     if seifa is not None:
         df = df.join(seifa)
+        if "population" not in df:
+            print("  using SEIFA usual resident population (Census DataPack unavailable)")
+            df["population"] = df["_pop_seifa"]
+        df = df.drop(columns="_pop_seifa")
     if "area_sqkm" in df and "population" in df:
         df["density"] = df["population"] / pd.to_numeric(df["area_sqkm"], errors="coerce")
     nat = dict(NATIONAL_CENSUS)

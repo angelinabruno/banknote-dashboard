@@ -39,12 +39,11 @@ jobs:
       - name: Describe downloaded tables
         run: python pipeline/discover.py > data/discovery.txt
 
-      - name: Build dashboard data
-        run: |
-          if [ -f pipeline/build.py ]; then python pipeline/build.py; else echo "build.py not written yet"; fi
-
       - name: Build regional data
         run: python pipeline/regions.py || echo "::warning::Regional data build failed; keeping the previous regional data"
+
+      - name: Build dashboard data
+        run: python pipeline/build.py
 
       - name: Commit refreshed data
         run: |

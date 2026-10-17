@@ -98,96 +98,100 @@ def to_millions(s, units):
     return s / 1e6
 
 
+def get(key, data, meta, series_id, *fallback, **kw):
+    """A series by its RBA Series ID, falling back to a title match if the ID changes."""
+    if data is not None and series_id in data:
+        print(f"  [{key}] {series_id}: {meta.loc[series_id, 'Title']} ({meta.loc[series_id].get('Units', '')})")
+        return data[series_id].dropna()
+    print(f"  [{key}] {series_id} not found, matching by title")
+    return pick(key, data, meta, *fallback, **kw) if fallback else None
+
+
+def splice(old, new):
+    """Join an older series onto a newer one, keeping the newer values where they overlap."""
+    if old is None:
+        return new
+    if new is None:
+        return old
+    return pd.concat([old[old.index < new.index.min()], new])
+
+
 # ---------------------------------------------------------------- banknotes (A6)
 print("A6 banknotes on issue")
 d, m = table("a6")
 if d is not None:
     for den in DENOMS:
-        v = pick("a6", d, m, rf"\${den}\b", "value", units=r"\$")
-        if v is None:
-            v = pick("a6", d, m, rf"\${den}\b", units=r"\$")
-        if v is not None:
-            add(f"notes_value_{den}", to_millions(v, units_of(m, d, v)), f"${den} value on issue", "$m", "RBA A6")
-        n = pick("a6", d, m, rf"\${den}\b", "number|volume", exclude=["value"])
-        if n is not None:
-            add(f"notes_count_{den}", to_millions(n, units_of(m, d, n) or "number"), f"${den} notes on issue", "million notes", "RBA A6")
-    tot = first(pick("a6", d, m, "total", "value", units=r"\$"), pick("a6", d, m, "total", units=r"\$"))
-    if tot is None and all(f"notes_value_{x}" in series for x in DENOMS):
-        tot = sum(series[f"notes_value_{x}"]["points"] for x in DENOMS)
-        tot_units = "$ million"
-    else:
-        tot_units = units_of(m, d, tot) if tot is not None else ""
+        v = get("a6", d, m, f"ARBAB{den}M", rf"\${den} notes")
+        add(f"notes_value_{den}", v, f"${den} value on issue", "$m", "RBA A6")
+    tot = get("a6", d, m, "ARBABTM", "all banknotes")
     if tot is not None:
-        tot = to_millions(tot, tot_units)
         add("notes_value_total", tot, "Value of banknotes on issue", "$m", "RBA A6")
         add("notes_value_yoy", yoy(tot), "Annual growth", "%", "RBA A6")
 
-# ---------------------------------------------------------------- counterfeits (A7)
+# ---------------------------------------------------------------- counterfeits (A7, quarterly)
 print("A7 counterfeits")
 d, m = table("a7")
 if d is not None:
-    ppm = first(pick("a7", d, m, "per million|ppm|parts per", exclude=[r"\$\d"]), pick("a7", d, m, "per million|ppm|parts per"))
-    add("counterfeit_ppm", ppm, "Counterfeits per million notes", "ppm", "RBA A7")
+    add("counterfeit_ppm", get("a7", d, m, "CRBACTPPMB", "all counterfeits per million"), "Counterfeits per million genuine notes", "ppm", "RBA A7")
+    add("counterfeit_count_total", get("a7", d, m, "CRBACTB", "all counterfeits$"), "Counterfeits detected", "number", "RBA A7")
     for den in DENOMS:
-        c = pick("a7", d, m, rf"\${den}\b", exclude=["per million", "ppm", "parts per"])
-        add(f"counterfeit_count_{den}", c, f"${den} counterfeits detected", "number", "RBA A7")
+        code = den.zfill(3)
+        add(f"counterfeit_count_{den}", get("a7", d, m, f"CRBAC{code}B", rf"^\${den} counterfeits$"), f"${den} counterfeits detected", "number", "RBA A7")
+        add(f"counterfeit_ppm_{den}", get("a7", d, m, f"CRBAC{code}PPMB", rf"\${den} counterfeits per million"), f"${den} counterfeits per million", "ppm", "RBA A7")
 
-# ---------------------------------------------------------------- ATMs (C4, C4.1, discontinued C4, C8)
-print("C4 ATMs")
+# ---------------------------------------------------------------- cash withdrawals (C4 seasonally adjusted, spliced to discontinued C4)
+print("C4 cash withdrawals")
 d, m = table("c4")
-num = val = None
-if d is not None:
-    num = pick("c4", d, m, "withdrawal", "number|volume", exclude=["value"])
-    val = pick("c4", d, m, "withdrawal", "value")
-    if num is not None:
-        num = to_millions(num, units_of(m, d, num))
-    if val is not None:
-        val = to_millions(val, units_of(m, d, val))
-print("C4 discontinued")
+num = get("c4", d, m, "CACWTAWNSA", "total number of cash withdrawals in australia")
+val = get("c4", d, m, "CACWTAWVSA", "total value of cash withdrawals in australia")
 dd, md = table("c4_disc")
-if dd is not None:
-    onum = pick("c4_disc", dd, md, "number|volume", exclude=["value", "machines", "terminals", "ATMs$"])
-    oval = pick("c4_disc", dd, md, "value")
-    if onum is not None:
-        onum = to_millions(onum, units_of(md, dd, onum))
-        num = onum if num is None else pd.concat([onum[onum.index < num.index.min()], num])
-    if oval is not None:
-        oval = to_millions(oval, units_of(md, dd, oval))
-        val = oval if val is None else pd.concat([oval[oval.index < val.index.min()], val])
-add("atm_withdrawals_number", num, "ATM withdrawals", "million per month", "RBA C4")
-add("atm_withdrawals_value", val, "ATM withdrawals value", "$m per month", "RBA C4")
+onum = get("c4_disc", dd, md, "CACWTN", "total number of atm cash withdrawals")
+oval = get("c4_disc", dd, md, "CACWTV", "total value of atm cash withdrawals")
+num = splice(None if onum is None else onum / 1000, None if num is None else num / 1000)   # '000 -> million
+val = splice(oval, val)
+add("atm_withdrawals_number", num, "Cash withdrawals", "million per month", "RBA C4")
+add("atm_withdrawals_value", val, "Cash withdrawals value", "$m per month", "RBA C4")
 if num is not None and val is not None:
-    add("atm_avg_withdrawal", (val / num).dropna(), "Average ATM withdrawal", "$", "RBA C4")
+    add("atm_avg_withdrawal", (val / num).dropna(), "Average cash withdrawal", "$", "RBA C4")
 
-print("ATM counts")
-count = None
-for key in ("c4_1", "c4", "c8_disc"):
-    d, m = table(key)
-    if d is None:
-        continue
-    c = pick(key, d, m, "number of ATMs|ATM terminals|terminals|machines", exclude=["withdrawal", "value"])
-    if c is not None and c.max() > 1000:
-        count = c if count is None else pd.concat([c[c.index < count.index.min()], count])
-add("atm_count", count, "Number of ATMs", "number", "RBA C4.1, C8")
+# ---------------------------------------------------------------- ATMs and branches (C8 to 2018; APRA from 2017)
+print("ATMs and branches")
+d, m = table("c8_disc")
+add("atm_count", get("c8_disc", d, m, "CPAAPSATM", "^ATMs$"), "ATMs, all operators", "number", "RBA C8")
+add("branch_count", get("c8_disc", d, m, "CPAAPSBB", "^bank branches$"), "Bank branches", "number", "RBA C8")
+apra_csv = CLEAN / "apra_points_of_presence_national.csv"
+if apra_csv.exists():
+    ap = pd.read_csv(apra_csv, index_col=0, parse_dates=True)
+    if "atm" in ap:
+        add("atm_count_adi", ap["atm"], "ATMs operated by banks and other ADIs", "number", "APRA")
+    if "branch" in ap:
+        add("branch_count_adi", ap["branch"], "Branches of banks and other ADIs", "number", "APRA")
+else:
+    print("  no APRA national counts (run regions.py first)")
 
+# ---------------------------------------------------------------- debit cards (C2)
 print("C2 debit cards")
 d, m = table("c2")
-if d is not None:
-    add("debit_purchases_number", pick("c2", d, m, "purchase", "number|volume", exclude=["value"]), "Debit card purchases", "number", "RBA C2")
+add("debit_purchases_number", get("c2", d, m, "CDCPTTNSA", "number of purchases"), "Debit card purchases", "million per month", "RBA C2")
+
+# ---------------------------------------------------------------- currency vs deposits (D3)
+print("D3 money")
+d, m = table("d3")
+cur, m1 = get("d3", d, m, "DMACN", "^currency$"), get("d3", d, m, "DMAM1N", "^M1$")
+if cur is not None and m1 is not None:
+    add("currency_pct_m1", (cur / m1 * 100).dropna(), "Currency as a share of M1", "%", "RBA D3")
 
 # ---------------------------------------------------------------- scale: GDP, population, cash rate, currency
 print("H1 GDP")
 d, m = table("h1")
 gdp_q = None
 if d is not None:
-    gdp_q = pick("h1", d, m, "gross domestic product|GDP", exclude=["chain", "real", "per capita", "growth", "change", "deflator"], units=r"\$")
-    if gdp_q is not None:
-        gdp_q = to_millions(gdp_q, units_of(m, d, gdp_q))
+    gdp_q = get("h1", d, m, "GGDPECCPGDP", "^nominal gdp$")
 
 print("F1 cash rate")
 d, m = table("f1")
 if d is not None:
-    cr = first(pick("f1", d, m, "cash rate target"), pick("f1", d, m, "cash rate"))
+    cr = get("f1", d, m, "FIRMMCRT", "cash rate target")
     if cr is not None:
         cr = cr.resample("ME").last().dropna()
     add("cash_rate", cr, "Cash rate target", "%", "RBA F1")
@@ -212,7 +216,7 @@ if "notes_value_total" in series:
         g = gdp_annual.reindex(tot.index, method="ffill", limit=6)
         add("notes_value_pct_gdp", (tot / g * 100).dropna(), "Banknotes on issue, % of GDP", "%", "RBA A6, H1")
     if pop is not None:
-        p = pop.reindex(pop.index.union(tot.index)).interpolate(limit_area="inside").reindex(tot.index)
+        p = pop.reindex(pop.index.union(tot.index)).interpolate(limit_area="inside").ffill(limit=8).reindex(tot.index)
         add("notes_value_per_capita", (tot * 1e6 / p).dropna(), "Banknotes on issue per person", "$", "RBA A6, ABS")
 
 # ---------------------------------------------------------------- manual data

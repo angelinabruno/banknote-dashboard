@@ -53,10 +53,10 @@ def resolve_url(src):
         req = urllib.request.Request(finder["page"], headers=HEADERS)
         with urllib.request.urlopen(req, timeout=60) as r:
             html = r.read().decode("utf-8", "replace")
-        links = re.findall(finder["pattern"], html, flags=re.I)
+        links = [x for x in re.findall(finder["pattern"], html, flags=re.I) if not re.search(r"\s", x.replace(" ", "%20").strip())]
         if links:
             # Newest first: file names carry dates, so sort descending.
-            link = sorted(set(links), reverse=True)[0].replace("&amp;", "&")
+            link = sorted(set(links), reverse=True)[0].replace("&amp;", "&").replace(" ", "%20")
             return urllib.parse.urljoin(finder["page"], link)
         print(f"      no link matching {finder['pattern']!r} on {finder['page']}; using configured URL")
     except Exception as e:  # noqa: BLE001
