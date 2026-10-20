@@ -276,3 +276,43 @@ footer.site { color: var(--text-muted); font-size: 12px; padding: 24px 0 40px; b
 .rg-controls .seg { flex-wrap: wrap; }
 .rg-controls > * { max-width: 100%; }
 .rg-controls select { max-width: 100%; }
+.pt-post, .rg-dot.pt-post { fill: var(--s3); background: var(--s3); }
+body.print-brief .rg-scatter { display: none !important; }
+
+/* ---------- Who would be hit hardest (scatter) ---------- */
+.rg-scatter { margin-top: 16px; }
+.rg-scatter-box { position: relative; max-width: 760px; }
+.rg-scatter-box svg { display: block; width: 100%; height: auto; }
+.rg-quad { fill: var(--bad); fill-opacity: 0.07; }
+.rg-quad-label { font-size: 12px; fill: var(--bad); font-weight: 600; }
+.axis-title { font-size: 12px; fill: var(--text-secondary); }
+.rg-dotp { fill: var(--s1); fill-opacity: 0.45; stroke: var(--surface-1); stroke-width: 1; cursor: pointer; }
+.rg-dotp.hot { fill: var(--s2); fill-opacity: 0.85; }
+.rg-dotp:hover, .rg-dotp:focus { fill-opacity: 1; stroke: var(--text-primary); outline: none; }
+.rg-dot-label { font-size: 11px; fill: var(--text-primary); pointer-events: none; paint-order: stroke; stroke: var(--surface-1); stroke-width: 3px; }
+
+/* ---------- Cash paradox ---------- */
+.paradox h3 { font-size: 20px; margin: 2px 0 12px; }
+.paradox-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 0 0 14px; }
+.paradox-stats div { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
+.paradox-stats b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.paradox-stats span { font-size: 13px; color: var(--text-secondary); }
+.paradox-note { margin: 12px 0 0; max-width: 85ch; color: var(--text-secondary); }
+
+/* ---------- Forecast ---------- */
+.fc-summary { margin: 10px 0 6px; font-weight: 500; }
+#fc-series { font: inherit; font-size: 14px; color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+
+/* ---------- World ---------- */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.chips button { appearance: none; font: inherit; font-size: 13px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.chips button[aria-pressed="true"] { background: var(--text-primary); color: var(--page); border-color: var(--text-primary); }
+.hbars { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.hbars li { display: grid; grid-template-columns: minmax(90px, 160px) 1fr 52px; gap: 10px; align-items: center; font-size: 13px; }
+.hbars .nm { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hbars .track { height: 14px; }
+.hbars .bar { display: block; height: 100%; background: var(--axis); border-radius: 0 4px 4px 0; }
+.hbars .vl { font-variant-numeric: tabular-nums; text-align: right; }
+.hbars li.hl .bar { background: var(--s1); }
+.hbars li.hl .nm, .hbars li.hl .vl { color: var(--text-primary); font-weight: 600; }
+

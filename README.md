@@ -2,7 +2,7 @@
 
 An interactive dashboard covering the demand for, use of, access to and integrity of Australia's banknotes. It is built from Reserve Bank of Australia (RBA) statistical tables, the RBA Consumer Payments Survey and ABS population data.
 
-**Tabs:** Overview · Demand · Use · Access · Integrity · Outlook (scenarios and the $5 redesign) · Regions (map and printable regional briefs) · Sources and methods
+**Tabs:** Overview (with the cash paradox) · Demand · Use · Access · Integrity · Outlook (forecast to 2030, scenarios and the $5 redesign) · World (international comparison) · Regions (cash vulnerability map and printable regional briefs) · Sources and methods
 
 ## Refreshing the data (one click)
 
@@ -23,7 +23,7 @@ pipeline/sources.py   every external file the dashboard uses (URLs in one place)
 pipeline/fetch.py     downloads them to data/raw/ and records status in data/raw/manifest.json
 pipeline/rba.py       parser for the RBA's standard statistical-table layout
 pipeline/build.py     finds the right series, derives measures, writes docs/data/dashboard.json
-pipeline/regions.py   builds the Regions tab: Census, SEIFA and APRA branch/ATM data by SA4, plus the map
+pipeline/regions.py   builds the Regions tab: Census, SEIFA and APRA data by SA4, distance to cash, the cash vulnerability index and the map
 pipeline/discover.py  lists every series in every table (written to data/discovery.txt)
 data/manual/          hand-entered figures: Consumer Payments Survey results and program milestones
 data/clean/           one tidy CSV per series, for use in Excel or elsewhere
@@ -51,6 +51,7 @@ python -m http.server -d docs 8000   # then open http://localhost:8000
 - RBA media releases on the Next Generation Banknote program and the $5 redesign
 - ABS Estimated Resident Population (Data API)
 - ABS 2021 Census General Community Profile (SA4 DataPack), SEIFA 2021 (by SA2) and ASGS 2021 SA4 boundaries
-- APRA Authorised deposit-taking institutions' points of presence (every bank branch and ATM, by location)
+- APRA Authorised deposit-taking institutions' points of presence (every bank branch, ATM and Bank@Post outlet, by location)
+- BIS CPMI comparative tables (banknotes and coins in circulation by country, for the World tab)
 
 This is an independent analysis of public data, not an official RBA publication.

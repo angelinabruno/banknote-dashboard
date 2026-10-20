@@ -6,7 +6,7 @@ const DENOMS = ["5", "10", "20", "50", "100"];
 const DCOLOR = { 5: "d5", 10: "d10", 20: "d20", 50: "d50", 100: "d100" };
 const nf = (d = 0) => new Intl.NumberFormat("en-AU", { maximumFractionDigits: d, minimumFractionDigits: d });
 const fmt = {
-  bn: (v) => `$${nf(v >= 100 ? 0 : 1).format(v / 1000)}b`,           // input $m
+  bn: (v) => `$${nf(v >= 1e5 ? 0 : v >= 1e4 ? 1 : 2).format(v / 1000)}b`,   // input $m
   bnTick: (v) => `$${nf(0).format(v / 1000)}b`,
   m: (v) => `$${nf(0).format(v)}m`,
   pct: (v, precise) => `${nf(precise ? 1 : 0).format(v)}%`,
@@ -188,20 +188,47 @@ function overview(p) {
   );
   p.append(takeaways(overviewTakeaways()), g);
 
-  // The paradox chart: notes on issue vs ATM withdrawals, indexed
-  const base = Date.UTC(2008, 0, 1);
-  const g2 = h("div", { class: "grid" });
-  g2.style.marginTop = "16px";
-  g2.append(lineCard({
-    span: 12, title: "More banknotes on issue, fewer used for payments",
-    sub: "Index, January 2008 = 100. Value of banknotes on issue vs value of ATM cash withdrawals",
-    source: "RBA A6, C4", format: fmt.idx, yZero: true, fixedRange: [base, Date.now()],
-    series: [
-      { label: "Banknotes on issue", short: "On issue", color: "s1", points: indexTo(pts("notes_value_total"), base) },
-      { label: "ATM withdrawals (12-month total)", short: "ATM withdrawals", color: "s2", points: indexTo(rolling12(pts("atm_withdrawals_value")), base) },
-    ],
-  }));
-  p.append(g2);
+  p.append(paradox());
+}
+
+// The cash paradox: Australians use cash for fewer payments but hold more of it.
+function paradox() {
+  const base = Date.UTC(2007, 5, 30);
+  const cps = D.cps ?? [];
+  const pc = pts("notes_value_per_capita");
+  const pcBase = pc.find((x) => x[0] >= base), pcLast = pc.at(-1);
+  const atm = rolling12(pts("atm_withdrawals_number"));
+  const atmBase = atm.find((x) => x[0] >= base), atmLast = atm.at(-1);
+  const c0 = cps[0], c1 = cps.at(-1);
+  const big = ((last("notes_value_50")?.[1] ?? 0) + (last("notes_value_100")?.[1] ?? 0)) / (last("notes_value_total")?.[1] || 1) * 100;
+  const wrap = h("div", { class: "card span-12 paradox" });
+  wrap.append(h("p", { class: "brief-kicker", text: "The cash paradox" }),
+    h("h3", { text: "Australians pay with cash far less, but hold more of it than ever" }));
+  const stats = h("div", { class: "paradox-stats" },
+    c0 && c1 && h("div", {}, h("b", { text: `${c0.cash_share_number_pct}% → ${c1.cash_share_number_pct}%` }), h("span", { text: `cash share of consumer payments, ${c0.year} to ${c1.year}` })),
+    atmBase && atmLast && h("div", {}, h("b", { text: `${nf(0).format((atmLast[1] / atmBase[1] - 1) * 100)}%` }), h("span", { text: `change in ATM withdrawals per year since ${new Date(atmBase[0]).getUTCFullYear()}` })),
+    pcBase && pcLast && h("div", {}, h("b", { text: `${fmt.dollars(pcBase[1])} → ${fmt.dollars(pcLast[1])}` }), h("span", { text: "banknotes on issue per person, 2007 to today" })),
+    big > 1 && h("div", {}, h("b", { text: `${nf(0).format(big)}%` }), h("span", { text: "of the value on issue is in $50 and $100 notes" })));
+  wrap.append(stats);
+  const body = h("div");
+  wrap.append(h("p", { class: "card-sub", text: "Index, 2007 = 100. Cash share of payments is from the Consumer Payments Survey, held every three years." }),
+    legend([{ label: "Banknotes on issue per person", color: "s1" }, { label: "ATM withdrawals per year", color: "s2" }, { label: "Cash share of payments", color: "s3" }]), body);
+  const series = [
+    { label: "Banknotes on issue per person", short: "Held", color: "s1", points: pcBase ? indexTo(pc, base) : [] },
+    { label: "ATM withdrawals (12-month total)", short: "Withdrawn", color: "s2", points: atmBase ? indexTo(atm, base) : [] },
+    { label: "Cash share of payments", short: "Used", color: "s3", points: c0 ? cps.map((r) => [Date.UTC(r.year, 6, 1), (r.cash_share_number_pct / c0.cash_share_number_pct) * 100]) : [] },
+  ].filter((x) => x.points.length);
+  if (series.length) {
+    lineChart(body, { series, format: fmt.idx, yZero: true, height: 300, annotations: [{ date: Date.UTC(2020, 2, 1), label: "COVID-19" }] });
+  }
+  const d19 = valueAt("notes_value_total", Date.UTC(2019, 11, 31), 20), d20 = valueAt("notes_value_total", Date.UTC(2020, 11, 31), 20);
+  const crisis = d19 && d20 ? ` (the value on issue rose ${nf(0).format((d20 / d19 - 1) * 100)}% in 2020)` : "";
+  wrap.append(h("p", { class: "paradox-note", text: `Why it matters: most banknotes are now held rather than spent, as savings, a precaution or a backup when systems fail. Demand jumps in a crisis${crisis} even as everyday use keeps falling. That changes what the note issue has to plan for: a large, high-denomination stock that must stay secure and trusted, plus a shrinking but essential payments role for people who rely on cash.` }),
+    h("div", { class: "foot" }, h("span", { text: "Source: RBA A6, C4, Consumer Payments Survey; ABS population" })));
+  const g = h("div", { class: "grid" });
+  g.style.marginTop = "16px";
+  g.append(wrap);
+  return g;
 }
 
 function rolling12(points) {
@@ -302,20 +329,21 @@ function use(p) {
 function access(p) {
   const n10 = change("atm_withdrawals_number", 10);
   const avg = last("atm_avg_withdrawal");
-  const br = pts("branch_count_adi"), atmA = pts("atm_count_adi");
+  const br = pts("branch_count_adi"), atmA = pts("atm_count_adi"), post = pts("bankpost_count");
   p.append(takeaways([
     n10 != null && `The number of ATM withdrawals has fallen ${nf(0).format(Math.abs(n10))}% over the past decade.`,
     avg && `People withdraw less often but in larger amounts: the average withdrawal is now ${fmt.dollars(avg[1])}.`,
     br.length > 1 && `Bank and other ADI branches fell from ${fmt.num(br[0][1])} in ${new Date(br[0][0]).getUTCFullYear()} to ${fmt.num(br.at(-1)[1])} in ${new Date(br.at(-1)[0]).getUTCFullYear()}, a ${nf(0).format((1 - br.at(-1)[1] / br[0][1]) * 100)}% drop. Branches are where many people deposit cash, so this matters most outside the cities.`,
     atmA.length > 1 && `Bank-operated ATMs fell from ${fmt.num(atmA[0][1])} to ${fmt.num(atmA.at(-1)[1])} over the same period. Part of this reflects banks selling ATM fleets to independent operators rather than machines disappearing, so it overstates the loss of access.`,
+    post.length > 1 && br.length > 1 && `Bank@Post held steady (${fmt.num(post[0][1])} outlets in ${new Date(post[0][0]).getUTCFullYear()}, ${fmt.num(post.at(-1)[1])} now)${post.at(-1)[1] > br.at(-1)[1] ? " and is now a larger face-to-face network than bank branches" : ""}. In many towns the post office is the last place to deposit or withdraw cash over the counter.`,
   ]));
   const g = h("div", { class: "grid" });
   g.append(
     lineCard({ span: 6, title: "ATM cash withdrawals, number", sub: "Million per month, seasonally adjusted", source: "RBA C4", format: fmt.mil, series: [{ label: "Withdrawals", color: "s1", points: pts("atm_withdrawals_number") }] }),
     lineCard({ span: 6, title: "ATM cash withdrawals, value", sub: "$ billion per month, seasonally adjusted", source: "RBA C4", format: (v) => `$${nf(1).format(v / 1000)}b`, series: [{ label: "Value", color: "s1", points: pts("atm_withdrawals_value") }] }),
     lineCard({ span: 6, title: "Average ATM withdrawal", sub: "Dollars", source: "RBA C4", format: fmt.dollars, yZero: false, series: [{ label: "Average", color: "s1", points: pts("atm_avg_withdrawal") }] }),
-    lineCard({ span: 6, title: "Number of ATMs", sub: "All operators to 2018 (RBA); bank-operated from 2017 (APRA). The two are defined differently.", source: "RBA C8, APRA", format: (v) => fmt.compact(v), series: [{ label: "All ATMs (RBA)", short: "All ATMs", color: "s1", points: pts("atm_count") }, { label: "Bank-operated ATMs (APRA)", short: "Bank ATMs", color: "s2", points: pts("atm_count_adi") }] }),
-    lineCard({ span: 6, title: "Number of bank branches", sub: "Bank branches to 2018 (RBA); branches of banks and other ADIs from 2017 (APRA)", source: "RBA C8, APRA", format: (v) => fmt.compact(v), series: [{ label: "Bank branches (RBA)", short: "RBA", color: "s1", points: pts("branch_count") }, { label: "ADI branches (APRA)", short: "APRA", color: "s2", points: pts("branch_count_adi") }] }),
+    lineCard({ span: 6, title: "Number of ATMs", sub: "All operators to 2018 (RBA); bank-operated from 2017 (APRA). The two are defined differently.", source: "RBA C8, APRA", format: (v) => fmt.compact(v), series: [{ label: "All ATMs (RBA)", short: "All ATMs", color: "s1", points: pts("atm_count") }, { label: "Bank-operated ATM machines (APRA)", short: "Bank ATMs", color: "s2", points: pts("atm_count_adi") }] }),
+    lineCard({ span: 6, title: "Number of bank branches and Bank@Post outlets", sub: "Bank branches to 2018 (RBA); branches of banks and other ADIs, and Bank@Post outlets, from 2017 (APRA)", source: "RBA C8, APRA", format: (v) => fmt.compact(v), series: [{ label: "Bank branches (RBA)", short: "RBA", color: "s1", points: pts("branch_count") }, { label: "ADI branches (APRA)", short: "Branches", color: "s2", points: pts("branch_count_adi") }, { label: "Bank@Post outlets (APRA)", short: "Bank@Post", color: "s3", points: pts("bankpost_count") }] }),
   );
   p.append(g);
 }
@@ -349,10 +377,13 @@ function outlook(p) {
   const tot = last("notes_value_total");
   const c5 = cagr("notes_value_total", 5), c10 = cagr("notes_value_total", 10), c20 = cagr("notes_value_total", 20);
   p.append(takeaways([
-    c5 != null && c10 != null && `Growth in the value on issue averaged ${nf(1).format(c10)}% a year over ten years and ${nf(1).format(c5)}% over five. Use the scenario below to test how sensitive the stock of notes is to that assumption.`,
+    c5 != null && c10 != null && `Growth in the value on issue averaged ${nf(1).format(c10)}% a year over ten years but only ${nf(1).format(c5)}% over five, as demand settled after the 2020 surge.`,
+    (() => { const f = D.forecasts?.notes_value_total; if (!f) return null; const e = f.points.at(-1); const c = Object.fromEntries(f.columns.map((k, i) => [k, i])); return `On the recent trend, the value on issue reaches about ${fmt.bn(e[c.p50])} by December ${e[0].slice(0, 4)}, with an 80% range of ${fmt.bn(e[c.lo80])} to ${fmt.bn(e[c.hi80])}. Tested against history, ranges like this have contained the outcome about ${f.backtest?.coverage80 ?? 80}% of the time.`; })(),
+    (() => { const a = D.forecasts?.notes_value_100, b = D.forecasts?.notes_value_50; return a && b && a.drift_pct > b.drift_pct + 1 ? `The $100 is growing much faster than the $50 (${nf(1).format(a.drift_pct)}% against ${nf(1).format(b.drift_pct)}% a year), so it will make up a growing share of the stock: a consideration for print planning and for counterfeit monitoring.` : null; })(),
     "The $5 redesign is the next major change to the note series. It is a chance to lift public engagement with cash, and it needs careful coordination with industry so machines and processes are ready on issue.",
   ]));
   const g = h("div", { class: "grid" });
+  g.append(forecastCard());
 
   // Scenario explorer
   const ctrl = h("div", { class: "scenario-controls" });
@@ -431,6 +462,130 @@ function outlook(p) {
   p.append(g);
 }
 
+// ---------- demand forecast (fan chart, built by pipeline/build.py)
+function forecastCard() {
+  const F = D.forecasts ?? {};
+  const keys = ["notes_value_total", ...DENOMS.map((d) => `notes_value_${d}`)].filter((k) => F[k]);
+  const label = (k) => (k === "notes_value_total" ? "All banknotes" : `$${k.split("_").pop()} notes`);
+  const sel = h("select", { id: "fc-series", "aria-label": "Banknotes to forecast" }, keys.map((k) => h("option", { value: k, text: label(k) })));
+  const summary = h("p", { class: "fc-summary" });
+  const chartBox = h("div");
+  const test = h("p", { class: "card-sub" });
+  const tbl = h("div");
+  const cols = (f) => Object.fromEntries(f.columns.map((c, i) => [c, i]));
+  function draw() {
+    const k = sel.value, f = F[k];
+    const c = cols(f);
+    const fp = f.points.map((r) => [parseDate(r[0]), ...r.slice(1)]);
+    const end = fp.at(-1);
+    const hist = pts(k).filter((x) => x[0] >= yearsAgo(fp[0][0], 15));
+    chartBox.replaceChildren();
+    lineChart(chartBox, {
+      format: fmt.bnTick, height: 300, yZero: false, endLabels: false,
+      bands: [
+        { color: "s1", opacity: 0.1, points: fp.map((r) => [r[0], r[c.lo95], r[c.hi95]]) },
+        { color: "s1", opacity: 0.18, points: fp.map((r) => [r[0], r[c.lo80], r[c.hi80]]) },
+      ],
+      series: [
+        { label: "Actual", color: "s1", points: hist },
+        { label: "Central forecast", color: "s1", dashed: true, points: fp.map((r) => [r[0], r[c.p50]]) },
+      ],
+    });
+    const now = hist.at(-1);
+    summary.textContent = `${label(k)}: ${fmt.bn(now[1])} on issue in ${monthYear(now[0])}. Central forecast for December ${new Date(end[0]).getUTCFullYear()}: ${fmt.bn(end[c.p50])}, with an 80% chance of being between ${fmt.bn(end[c.lo80])} and ${fmt.bn(end[c.hi80])}. Trend growth ${nf(1).format(f.drift_pct)}% a year.`;
+    const bt = f.backtest;
+    test.textContent = bt?.tests?.length ? `How reliable is this? Re-running the same model from every year since ${new Date(parseDate(bt.tests[0].origin)).getUTCFullYear()}, the actual value ${bt.years_ahead} years later fell inside the 80% range ${bt.coverage80}% of the time, and the typical (median) miss was ${nf(1).format(bt.median_abs_error_pct)}%. The biggest misses came from forecasts made just after the 2020 surge in demand.` : "";
+  }
+  sel.addEventListener("change", draw);
+
+  // Denomination outlook table
+  const rows = keys.map((k) => {
+    const f = F[k], c = cols(f), end = f.points.at(-1), now = last(k);
+    return [label(k), now ? fmt.bn(now[1]) : "", fmt.bn(end[c.p50]), `${fmt.bn(end[c.lo80])} to ${fmt.bn(end[c.hi80])}`, `${nf(1).format(f.drift_pct)}%`];
+  });
+  tbl.append(tableFor(["", "On issue now", "December 2030, central", "80% range", "Trend growth a year"], rows));
+
+  return card({
+    span: 12, title: "Forecast: value of banknotes on issue to 2030",
+    sub: "Central forecast with 80% and 95% ranges. The trend is the past five years' average growth; the ranges reflect how much annual growth has varied over 20 years.",
+    source: "RBA A6; model and backtest in pipeline/build.py",
+    legendItems: [{ label: "Actual", color: "s1" }, { label: "Central forecast (dashed) and ranges", color: "s1" }],
+    build: (b) => {
+      if (!keys.length) return false;
+      b.append(h("label", { for: "fc-series", class: "rg-label" }, "Show ", sel), summary, chartBox, test, tbl);
+      draw();
+    },
+  });
+}
+
+// ---------- international comparison (BIS CPMI)
+const PEER_DEFAULT = ["SE", "GB", "CA", "XM", "JP"];
+function world(p) {
+  const I = D.international;
+  if (!I || !I.AU) { p.append(h("p", { class: "empty", text: "International data wasn't available in the latest refresh." })); return; }
+  const latestOf = (e, key = "pct_gdp") => e[key]?.at(-1);
+  const year = Math.max(...Object.values(I).map((e) => latestOf(e)?.[0] ?? 0));
+  const ranked = Object.entries(I).map(([code, e]) => ({ code, name: e.name, v: e.pct_gdp?.find((x) => x[0] === year)?.[1] })).filter((x) => x.v != null).sort((a, b) => b.v - a.v);
+  const au = ranked.find((x) => x.code === "AU");
+  const auSeries = I.AU.pct_gdp;
+  const auFirst = auSeries[0];
+  const med = ranked[Math.floor(ranked.length / 2)];
+  const se = ranked.find((x) => x.code === "SE"), jp = ranked.find((x) => x.code === "JP");
+  const pcRank = Object.entries(I).map(([code, e]) => ({ code, v: e.per_capita_usd?.find((x) => x[0] === year)?.[1] })).filter((x) => x.v != null).sort((a, b) => b.v - a.v);
+  const auPc = pcRank.findIndex((x) => x.code === "AU");
+  p.append(takeaways([
+    au && `In ${year}, currency in circulation in Australia was worth ${nf(1).format(au.v)}% of GDP, ${ordinal(ranked.indexOf(au) + 1)} of the ${ranked.length} economies the BIS compares (median ${nf(1).format(med.v)}%).`,
+    se && jp && `The range is wide: from ${nf(1).format(se.v)}% in Sweden, the clearest example of a country moving away from cash, to ${nf(1).format(jp.v)}% in Japan, where notes remain a major store of value.`,
+    auFirst && au && `Australia's ratio ${au.v > auFirst[1] + 0.2 ? "rose" : au.v < auFirst[1] - 0.2 ? "fell" : "was little changed"} from ${nf(1).format(auFirst[1])}% in ${auFirst[0]}, with a pandemic spike in 2020. Like most advanced economies, Australia has not followed Sweden's path: cash use for payments has fallen, but demand for notes as a store of value has held up.`,
+    auPc >= 0 && `Per person, Australia ranks ${ordinal(auPc + 1)} of ${pcRank.length} (in US dollars), which reflects how much of the stock is held in $50 and $100 notes.`,
+  ]));
+
+  const g = h("div", { class: "grid" });
+  const chips = h("div", { class: "chips", role: "group", "aria-label": "Compare with" });
+  const others = Object.entries(I).filter(([c, e]) => c !== "AU" && e.pct_gdp?.length).sort((a, b) => a[1].name.localeCompare(b[1].name));
+  const COLORS = ["s2", "s3", "d100", "d5", "d10"];
+  let picked = PEER_DEFAULT.filter((c) => I[c]).slice(0, 3);
+  const chartBox = h("div");
+  const lg = h("div");
+  const toPts = (arr) => arr.map(([y, v]) => [Date.UTC(y, 6, 1), v]);
+  function draw() {
+    const series = [{ label: "Australia", short: "Australia", color: "s1", points: toPts(I.AU.pct_gdp) },
+      ...picked.map((c, i) => ({ label: I[c].name, short: I[c].name, color: COLORS[i], points: toPts(I[c].pct_gdp) }))];
+    lg.replaceChildren(legend(series.map((x) => ({ label: x.label, color: x.color }))) ?? "");
+    chartBox.replaceChildren();
+    lineChart(chartBox, { series, format: fmt.pct1, height: 300, dateFormat: (t) => String(new Date(t).getUTCFullYear()) });
+    for (const b of chips.querySelectorAll("button")) b.setAttribute("aria-pressed", String(picked.includes(b.dataset.code)));
+  }
+  for (const [code, e] of others) {
+    const b = h("button", { type: "button", "data-code": code, text: e.name });
+    b.addEventListener("click", () => {
+      picked = picked.includes(code) ? picked.filter((x) => x !== code) : [...picked, code].slice(-3);
+      draw();
+    });
+    chips.append(b);
+  }
+  g.append(card({
+    span: 12, title: "Currency in circulation, per cent of GDP", sub: "Australia against up to three economies. Pick countries to compare.", source: "BIS CPMI comparative tables (Red Book statistics)",
+    table: () => tableFor(["Year", "Australia", ...picked.map((c) => I[c].name)], I.AU.pct_gdp.map(([y, v]) => [y, `${v}%`, ...picked.map((c) => { const x = I[c].pct_gdp.find((r) => r[0] === y); return x ? `${x[1]}%` : ""; })]).reverse()),
+    build: (b) => { b.append(chips, lg, chartBox); draw(); },
+  }));
+
+  // Ranking, latest year
+  const max = ranked[0]?.v || 1;
+  g.append(card({
+    span: 12, title: `Where Australia sits, ${year}`, sub: "Banknotes and coins in circulation, per cent of GDP", source: "BIS CPMI comparative tables",
+    table: () => tableFor(["Rank", "Economy", "% of GDP"], ranked.map((r, i) => [i + 1, r.name, `${r.v}%`])),
+    build: (b) => {
+      b.append(h("ol", { class: "hbars" }, ranked.map((r) => {
+        const bar = h("span", { class: "bar" }); bar.style.width = `${(r.v / max) * 100}%`;
+        return h("li", { class: r.code === "AU" ? "hl" : "" }, h("span", { class: "nm", text: r.name }), h("span", { class: "track" }, bar), h("span", { class: "vl", text: `${nf(1).format(r.v)}%` }));
+      })));
+    },
+  }));
+  p.append(g);
+}
+const ordinal = (n) => { const s2 = ["th", "st", "nd", "rd"], v = n % 100; return n + (s2[(v - 20) % 10] || s2[v] || s2[0]); };
+
 function sources(p) {
   const rows = (D.sources ?? []).map((s) => [s]);
   const t = h("table", { class: "data" },
@@ -449,10 +604,14 @@ function sources(p) {
       "Share of GDP: value on issue divided by the sum of the latest four quarters of nominal GDP (RBA table H1).",
       "Per person: value on issue divided by the ABS estimated resident population for the nearest quarter.",
       "Counterfeits: counterfeits detected per million genuine banknotes, as published quarterly by the RBA (table A7). Detection depends on notes being found and reported.",
-      "ATMs and branches: RBA table C8 (discontinued in 2018) counts all ATMs, including independent operators. APRA's points of presence data, from 2017, covers only ATMs and branches run by banks and other authorised deposit-taking institutions, so the two series are not directly comparable.",
+      "ATMs and branches: RBA table C8 (discontinued in 2018) counts all ATMs, including independent operators. APRA's points of presence data, from 2017, covers only ATMs and branches run by banks and other authorised deposit-taking institutions, plus Bank@Post outlets, so the two series are not directly comparable. APRA lists ATM sites with the number of machines at each; the dashboard counts machines.",
       "ATM data: seasonally adjusted monthly withdrawals from RBA table C4, extended back with the discontinued C4 series where available. Average withdrawal is value divided by number.",
       "Consumer payments: shares of payments by number and value from the RBA Consumer Payments Survey, held every three years. These figures are entered by hand from RBA publications and listed in data/manual/consumer_payments_survey.csv.",
       "Scenarios: simple compound growth from the latest actual value. They show sensitivity to assumptions, not a forecast.",
+      "Forecast: a random walk with drift on the log of the value on issue. The trend is the average growth of the past five years; the 80% and 95% ranges combine the year-to-year variation in growth over 20 years with uncertainty about the trend itself, so they widen over time. The model is re-run from every year since 2008 and checked against what actually happened five years later.",
+      "Cash vulnerability index: for each SA4 region, a cash reliance score (share aged 65 and over, IRSD disadvantage, share First Nations, low median household income) and a cash access gap score (distance to the nearest cash access point, share of residents more than 10 km away, branch closures since 2017). Each indicator is scaled from 0 to 100 between the 5th and 95th percentile of regions, averaged within each score, and the index is the average of the two scores. It ranks regions against each other; it is not an absolute measure.",
+      "Distance to cash: straight-line distance from the centre of each SA2 area (ABS) to the nearest bank branch, Bank@Post outlet, bank-operated ATM or other face-to-face point (APRA), weighted by population. Independent ATMs and cash-out at shops are not included, so it overstates distances in some places. Road distances are longer.",
+      "International comparison: banknotes and coins in circulation as a share of GDP and per person (US dollars), from the BIS Committee on Payments and Market Infrastructures comparative tables, published annually.",
     ].map((x) => h("li", { text: x }))),
     h("h3", { text: "Caveats" }),
     h("p", { text: "Some RBA series are revised or re-based. Discontinued series are joined to current ones only where they overlap closely. This dashboard is an independent analysis of public data and is not produced by the Reserve Bank of Australia." }),
@@ -466,8 +625,9 @@ const PANELS = [
   ["use", "Use", "How often Australians pay with cash, and how that has changed against cards.", use],
   ["access", "Access", "Whether people can still get cash easily: ATM withdrawals and the network that supports them.", access],
   ["integrity", "Integrity", "Counterfeiting rates, a key measure of trust in the currency.", integrity],
-  ["outlook", "Outlook", "Where demand for banknotes could go, and the programs shaping the future of the note series.", outlook],
-  ["regions", "Regions", "Census and banking statistics for each of Australia's SA4 regions, with a printable brief for any region you're visiting.", regionsPanel],
+  ["outlook", "Outlook", "Where demand for banknotes is heading, how confident we can be, and the programs shaping the note series.", outlook],
+  ["world", "World", "How Australia's use of currency compares with other economies.", world],
+  ["regions", "Regions", "Who relies on cash and how easy it is to get, for each of Australia's 89 SA4 regions, with a printable brief for any region you're visiting.", regionsPanel],
   ["sources", "Sources and methods", "Where every number comes from, when it was last refreshed, and how it was calculated.", sources],
 ];
 
@@ -477,7 +637,7 @@ function setTab(id, push = true) {
     $(`#tab-${pid}`).tabIndex = pid === id ? 0 : -1;
     $(`#panel-${pid}`).classList.toggle("active", pid === id);
   }
-  $(".filters").hidden = ["sources", "outlook", "overview", "regions"].includes(id);
+  $(".filters").hidden = ["sources", "outlook", "overview", "regions", "world"].includes(id);
   if (push && !location.hash.startsWith(`#${id}/`)) history.replaceState(null, "", `#${id}`);
 }
 

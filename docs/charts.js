@@ -97,7 +97,7 @@ export function lineChart(container, opts) {
   const {
     series, format = (v) => v.toLocaleString(), height = 260, yZero = true,
     range = null, annotations = [], area = false, dateFormat = (t) => new Date(t).toLocaleDateString("en-AU", { month: "short", year: "numeric" }),
-    endLabels = true, yMax = null,
+    endLabels = true, yMax = null, bands = [],
   } = opts;
   container.classList.add("chart");
 
@@ -112,8 +112,11 @@ export function lineChart(container, opts) {
     })).filter((s) => s.pts.length);
     if (!visible.length) return;
 
-    const allT = visible.flatMap((s) => s.pts.map((p) => p[0]));
-    const allV = visible.flatMap((s) => s.pts.map((p) => p[1])).filter((v) => v != null && isFinite(v));
+    // Shaded bands, e.g. forecast intervals: { color, opacity, points: [[t, lo, hi]] }
+    const vb = bands.map((b) => ({ ...b, pts: b.points.filter(([t]) => !range || (t >= range[0] && t <= range[1])) })).filter((b) => b.pts.length);
+    const allT = visible.flatMap((s) => s.pts.map((p) => p[0])).concat(vb.flatMap((b) => b.pts.map((p) => p[0])));
+    const allV = visible.flatMap((s) => s.pts.map((p) => p[1])).concat(vb.flatMap((b) => b.pts.flatMap((p) => [p[1], p[2]])))
+      .filter((v) => v != null && isFinite(v));
     const t0 = Math.min(...allT), t1 = Math.max(...allT);
     let vMin = Math.min(...allV), vMax = yMax ?? Math.max(...allV);
     if (yZero) vMin = Math.min(0, vMin);
@@ -152,6 +155,12 @@ export function lineChart(container, opts) {
       }
       return d;
     };
+
+    for (const b of vb) {
+      const top = b.pts.map(([t, , hi], i) => `${i ? "L" : "M"}${x(t).toFixed(1)},${y(hi).toFixed(1)}`).join("");
+      const bottom = [...b.pts].reverse().map(([t, lo]) => `L${x(t).toFixed(1)},${y(lo).toFixed(1)}`).join("");
+      el("path", { d: `${top}${bottom}Z`, fill: color(b.color), "fill-opacity": b.opacity ?? 0.15, stroke: "none" }, svg);
+    }
 
     if (area && visible.length === 1) {
       const s = visible[0];

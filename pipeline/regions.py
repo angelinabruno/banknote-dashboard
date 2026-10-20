@@ -12,6 +12,7 @@ import pathlib
 import re
 import zipfile
 
+import numpy as np
 import pandas as pd
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -25,6 +26,11 @@ NATIONAL_CENSUS = {"median_age": 38, "median_hh_income": 1746, "median_rent": 37
 
 METRICS = [
     # id, label, unit, format, short description, cash relevance
+    ("cvi", "Cash vulnerability index", "0 to 100", "int", "How exposed residents would be to a loss of cash services: the average of the cash reliance and access gap scores below. Higher means more vulnerable", "Combines who relies on cash with how hard it is to get."),
+    ("reliance", "Cash reliance score", "0 to 100", "int", "Average score on four drivers of cash use: share aged 65 and over, disadvantage (IRSD), share First Nations, and low household income. Each is scaled 0 to 100 across regions", "Older, lower-income and remote First Nations communities rely on cash most."),
+    ("access_gap", "Cash access gap score", "0 to 100", "int", "Average score on distance to the nearest cash access point, share of residents more than 10 km away, and branch closures since 2017. Each is scaled 0 to 100 across regions", "Distance and closures raise the cost of using cash."),
+    ("km_to_cash", "Distance to nearest cash access point", "km", "dec1", "Population-weighted average straight-line distance from each SA2's centre to the nearest bank branch, Bank@Post outlet, bank ATM or other face-to-face point", "The further away cash is, the harder it is to use."),
+    ("pct_far_cash", "Residents more than 10 km from cash", "%", "pct", "Share of residents whose SA2 centre is more than 10 km in a straight line from the nearest cash access point", "The further away cash is, the harder it is to use."),
     ("population", "Population", "people", "int", "Usual residents, 2021 Census", None),
     ("density", "Population density", "people per km²", "dec1", "Residents per square kilometre", None),
     ("median_age", "Median age", "years", "int", "Median age of residents", "Older Australians use cash more than younger ones."),
@@ -36,11 +42,17 @@ METRICS = [
     ("pct_born_overseas", "Born overseas", "%", "pct", "Share of residents born outside Australia", None),
     ("pct_other_language", "Speak another language at home", "%", "pct", "Share of residents using a language other than English at home", "Relevant to public education on banknote security features."),
     ("median_rent", "Median rent", "$ a week", "dollars", "Median weekly rent", None),
-    ("atms_per_10k", "Bank-operated ATMs per 10,000 people", "per 10,000", "dec1", "ATMs run by banks and other ADIs (APRA), per 10,000 residents. Excludes independent ATM operators", "Fewer ATMs means harder access to cash."),
+    ("atms_per_10k", "Bank-operated ATMs per 10,000 people", "per 10,000", "dec1", "ATM machines run by banks and other ADIs (APRA), per 10,000 residents. Excludes independent ATM operators", "Fewer ATMs means harder access to cash."),
     ("branches_per_10k", "Bank branches per 10,000 people", "per 10,000", "dec1", "Branches of banks and other ADIs (APRA), per 10,000 residents", "Branches are a key way to deposit and withdraw cash."),
     ("atm_change", "Change in bank-operated ATMs since 2017", "%", "pct_signed", "Percentage change in bank-operated ATMs since June 2017. Partly reflects banks selling ATMs to independent operators", "Shrinking networks raise the cost and effort of using cash."),
+    ("posts_per_10k", "Bank@Post outlets per 10,000 people", "per 10,000", "dec1", "Australia Post outlets offering Bank@Post banking (APRA), per 10,000 residents", "Bank@Post is often the last face-to-face banking service in small towns."),
     ("branch_change", "Change in branches since 2017", "%", "pct_signed", "Percentage change in branches since June 2017", "Shrinking networks raise the cost and effort of using cash."),
 ]
+
+# Components of the cash vulnerability index: (metric, +1 if a higher value means more vulnerable)
+RELIANCE = [("pct_65plus", 1), ("irsd", -1), ("pct_first_nations", 1), ("median_hh_income", -1)]
+ACCESS_GAP = [("km_to_cash", 1), ("pct_far_cash", 1), ("branch_change", -1)]
+FAR_KM = 10
 
 
 def manifest():
@@ -136,7 +148,8 @@ def load_seifa():
         print("  no SEIFA")
         return None, None
     j = json.loads(p.read_text())
-    df = pd.DataFrame([f["attributes"] for f in j.get("features", [])])
+    df = pd.DataFrame([{**f["attributes"], "lon": (f.get("centroid") or {}).get("x"), "lat": (f.get("centroid") or {}).get("y")}
+                       for f in j.get("features", [])])
     if df.empty:
         print("  SEIFA empty")
         return None, None
@@ -152,7 +165,9 @@ def load_seifa():
     print(f"  SEIFA: {len(df)} SA2s -> {len(irsd)} SA4s")
     sa2_names = dict(zip(df["sa2_name_2021"].str.lower(), df["sa2"]))
     pop = df.groupby("code")["urp"].sum()
-    return pd.DataFrame({"irsd": irsd, "pct_disadvantaged": dis, "_pop_seifa": pop}), (nat, sa2_names)
+    sa2 = df[["sa2", "code", "urp", "lon", "lat"]].dropna()
+    print(f"  SEIFA: {len(sa2)} SA2 centres")
+    return pd.DataFrame({"irsd": irsd, "pct_disadvantaged": dis, "_pop_seifa": pop}), (nat, sa2_names, sa2)
 
 
 # ------------------------------------------------------------------ APRA points of presence
@@ -197,18 +212,69 @@ def load_apra(sa4_names):
     df["kind"] = None
     df.loc[t.str.contains("atm"), "kind"] = "atm"
     df.loc[t.eq("branch") | t.eq("branches"), "kind"] = "branch"
+    df.loc[t.str.contains("post"), "kind"] = "post"
+    df.loc[t.str.contains("other face"), "kind"] = "other"
     print("  APRA service types:", df[typ].value_counts().to_dict())
+    # Each row is a site; "Number" is how many (e.g. ATM machines) are at it.
+    num = col(df, r"number", required=False)
+    df["n"] = pd.to_numeric(df[num], errors="coerce").fillna(1) if num else 1
     df["_p"] = pd.to_datetime(df[period], errors="coerce")
     latest, first = df["_p"].max(), df["_p"].min()
     print(f"  APRA periods {first:%Y-%m} .. {latest:%Y-%m}")
     now, then = df[df["_p"] == latest], df[df["_p"] == first]
-    counts = now.groupby(["code", "kind"]).size().unstack(fill_value=0)
-    base = then.groupby(["code", "kind"]).size().unstack(fill_value=0)
-    national = df.groupby(["_p", "kind"]).size().unstack(fill_value=0)
+    counts = now.groupby(["code", "kind"])["n"].sum().unstack(fill_value=0)
+    base = then.groupby(["code", "kind"])["n"].sum().unstack(fill_value=0)
+    national = df.groupby(["_p", "kind"])["n"].sum().unstack(fill_value=0)
     national.index.name = "date"
     pts = [[round(float(a), 4), round(float(b), 4), k, c]
            for a, b, k, c in now.loc[now["kind"].notna(), [lon, lat, "kind", "code"]].itertuples(index=False)]
     return counts, base, pts, national
+
+
+# ------------------------------------------------------------------ distance to cash
+def nearest_km(src, dst):
+    """Straight-line km from each (lon, lat) in src to the nearest point in dst."""
+    if not len(src) or not len(dst):
+        return np.full(len(src), np.nan)
+    lon1, lat1 = np.radians(src[:, 0])[:, None], np.radians(src[:, 1])[:, None]
+    lon2, lat2 = np.radians(dst[:, 0])[None, :], np.radians(dst[:, 1])[None, :]
+    a = np.sin((lat2 - lat1) / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin((lon2 - lon1) / 2) ** 2
+    return (2 * 6371 * np.arcsin(np.sqrt(a))).min(axis=1)
+
+
+def access_distances(sa2, pts):
+    """Population-weighted distance from SA2 centres to cash, summarised by SA4."""
+    if sa2 is None or sa2.empty or not pts:
+        print("  no SA2 centres or access points; skipping distances")
+        return None, {}
+    p = np.array([[x[0], x[1]] for x in pts])
+    kinds = np.array([x[2] for x in pts])
+    xy = sa2[["lon", "lat"]].to_numpy(float)
+    d = sa2.copy()
+    d["cash"] = nearest_km(xy, p[np.isin(kinds, ["atm", "branch", "post", "other"])])
+    d["deposit"] = nearest_km(xy, p[np.isin(kinds, ["branch", "post"])])
+    d["far"] = (d["cash"] > FAR_KM).astype(float)
+    w = d["urp"]
+    def wavg(x, c):
+        return (x[c] * x["urp"]).sum() / x["urp"].sum() if x["urp"].sum() else np.nan
+    g = d.groupby("code")
+    out = pd.DataFrame({
+        "km_to_cash": g.apply(lambda x: wavg(x, "cash"), include_groups=False),
+        "pct_far_cash": g.apply(lambda x: wavg(x, "far") * 100, include_groups=False),
+        "km_to_deposit": g.apply(lambda x: wavg(x, "deposit"), include_groups=False),
+    })
+    nat = {"km_to_cash": (d["cash"] * w).sum() / w.sum(), "pct_far_cash": (d["far"] * w).sum() / w.sum() * 100,
+           "km_to_deposit": (d["deposit"] * w).sum() / w.sum()}
+    print(f"  distances: {nat['pct_far_cash']:.1f}% of residents more than {FAR_KM} km from cash")
+    return out, nat
+
+
+def score(s, sign, log=False):
+    """0 (least vulnerable) to 100 (most), scaled between the 5th and 95th
+    percentile of regions so extreme values still stand out but can't dominate."""
+    x = (np.log1p(s) if log else s) * sign
+    lo, hi = x.quantile(0.05), x.quantile(0.95)
+    return ((x - lo) / (hi - lo)).clip(0, 1) * 100
 
 
 # ------------------------------------------------------------------ assemble
@@ -218,6 +284,7 @@ def main():
     census = load_census()
     seifa, extra = load_seifa()
     nat_seifa = extra[0] if extra else {}
+    sa2 = extra[2] if extra else None
     counts, base, pts, apra_national = load_apra({v["name"]: k for k, v in (meta or {}).items()})
     if apra_national is not None:
         CLEAN.mkdir(parents=True, exist_ok=True)
@@ -241,7 +308,7 @@ def main():
     nat = dict(NATIONAL_CENSUS)
     nat.update(nat_seifa or {})
     if counts is not None and "population" in df:
-        for kind, label in (("atm", "atms"), ("branch", "branches")):
+        for kind, label in (("atm", "atms"), ("branch", "branches"), ("post", "posts")):
             if kind in counts:
                 c = counts[kind].reindex(df.index).fillna(0)
                 df[f"{label}_count"] = c
@@ -259,12 +326,26 @@ def main():
                 nat[k] = (df[k] * df["population"]).sum() / P
         if "area_sqkm" in df:
             nat["density"] = P / pd.to_numeric(df["area_sqkm"], errors="coerce").sum()
+    dist, nat_dist = access_distances(sa2, pts)
+    if dist is not None:
+        df = df.join(dist)
+        nat.update(nat_dist)
     df = df[~df.get("name", pd.Series(dtype=str)).astype(str).str.contains("Migratory|No usual address", case=False, na=False)]
     if "population" in df:
         df = df[df["population"].fillna(0) > 0]
     if meta:
         # Census also has "migratory" and "no usual address" pseudo-regions with no boundary.
         df = df[df["name"].notna()]
+    # Cash vulnerability index: percentile ranks across regions, averaged
+    for name, parts in (("reliance", RELIANCE), ("access_gap", ACCESS_GAP)):
+        have = [(m, sign) for m, sign in parts if m in df and df[m].notna().sum() > 10]
+        if len(have) >= 2:
+            df[name] = pd.concat([score(df[m], sign, log=m.startswith("km_")) for m, sign in have], axis=1).mean(axis=1)
+            print(f"  {name} from {[m for m, _ in have]}")
+    if "reliance" in df and "access_gap" in df:
+        df["cvi"] = (df["reliance"] + df["access_gap"]) / 2
+        w = df["population"] / df["population"].sum()
+        nat.update({k: float((df[k] * w).sum()) for k in ("cvi", "reliance", "access_gap")})
 
     metrics = [{"id": i, "label": l, "unit": u, "format": f, "description": d, "cash": c}
                for i, l, u, f, d, c in METRICS if i in df.columns and df[i].notna().any()]
@@ -280,7 +361,8 @@ def main():
     CLEAN.mkdir(parents=True, exist_ok=True)
     out = {"metrics": metrics, "regions": rows,
            "national": {k: round(float(v), 2) for k, v in nat.items() if v is not None and not pd.isna(v)},
-           "notes": {"census_year": 2021, "apra": "Latest June figures from APRA's points of presence publication."}}
+           "notes": {"census_year": 2021, "apra": "Latest June figures from APRA's points of presence publication.",
+                     "far_km": FAR_KM, "cvi_components": {"reliance": [m for m, _ in RELIANCE], "access_gap": [m for m, _ in ACCESS_GAP]}}}
     (DOCS / "regions.json").write_text(json.dumps(out, separators=(",", ":")))
     pd.DataFrame(rows).to_csv(CLEAN / "regions.csv", index=False)
     if geo:

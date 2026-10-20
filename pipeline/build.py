@@ -11,7 +11,9 @@ import io
 import json
 import pathlib
 import re
+import zipfile
 
+import numpy as np
 import pandas as pd
 
 import rba
@@ -166,6 +168,8 @@ if apra_csv.exists():
         add("atm_count_adi", ap["atm"], "ATMs operated by banks and other ADIs", "number", "APRA")
     if "branch" in ap:
         add("branch_count_adi", ap["branch"], "Branches of banks and other ADIs", "number", "APRA")
+    if "post" in ap:
+        add("bankpost_count", ap["post"], "Bank@Post outlets", "number", "APRA")
 else:
     print("  no APRA national counts (run regions.py first)")
 
@@ -219,6 +223,94 @@ if "notes_value_total" in series:
         p = pop.reindex(pop.index.union(tot.index)).interpolate(limit_area="inside").ffill(limit=8).reindex(tot.index)
         add("notes_value_per_capita", (tot * 1e6 / p).dropna(), "Banknotes on issue per person", "$", "RBA A6, ABS")
 
+# ---------------------------------------------------------------- forecasts
+# A random walk with drift in log terms. The central path continues the past
+# five years' average growth; the bands combine year-to-year volatility with
+# uncertainty about that average, so they widen with the horizon. Tested by
+# re-running the model from every September since 2008 and checking how often
+# the outcome five years later fell inside the 80% band.
+FORECAST_END = pd.Timestamp("2030-12-31")
+DRIFT_YEARS, VOL_YEARS, TEST_YEARS = 5, 20, 5
+Z = {"p50": 0, "lo80": -1.2816, "hi80": 1.2816, "lo95": -1.96, "hi95": 1.96}
+
+
+def fit(s):
+    logs = np.log(s)
+    last_t = s.index[-1]
+    mu = (logs.iloc[-1] - logs[logs.index <= last_t - pd.DateOffset(years=DRIFT_YEARS)].iloc[-1]) / DRIFT_YEARS
+    g = (logs - logs.shift(12)).dropna()
+    g = g[(g.index > last_t - pd.DateOffset(years=VOL_YEARS)) & (g.index.month == last_t.month)]   # non-overlapping years
+    return logs.iloc[-1], mu, float(g.std())
+
+
+def band(level, mu, sigma, years):
+    sd = sigma * np.sqrt(years + years ** 2 / DRIFT_YEARS)
+    return {k: float(np.exp(level + mu * years + z * sd)) for k, z in Z.items()}
+
+
+def forecast(s):
+    s = s.resample("ME").last().dropna()
+    s = s[s > 0]
+    if len(s) < 12 * (DRIFT_YEARS + 3):
+        return None
+    level, mu, sigma = fit(s)
+    last_t = s.index[-1]
+    pts = []
+    for t in pd.date_range(last_t, FORECAST_END, freq="ME"):
+        b = band(level, mu, sigma, (t - last_t).days / 365.25)
+        pts.append([t.strftime("%Y-%m-%d")] + [round(b[k], 1) for k in Z])
+    tests = []
+    for year in range(2008, last_t.year - TEST_YEARS + 1):
+        origin = pd.Timestamp(year=year, month=last_t.month, day=1) + pd.offsets.MonthEnd(0)
+        past = s[s.index <= origin]
+        target = s[s.index <= origin + pd.DateOffset(years=TEST_YEARS)]
+        if len(past) < 12 * (DRIFT_YEARS + 3) or target.index[-1] < origin + pd.DateOffset(years=TEST_YEARS) - pd.DateOffset(days=40):
+            continue
+        b = band(*fit(past), TEST_YEARS)
+        actual = float(target.iloc[-1])
+        tests.append({"origin": origin.strftime("%Y-%m-%d"), "predicted": round(b["p50"], 1), "actual": round(actual, 1),
+                      "error_pct": round((b["p50"] / actual - 1) * 100, 1), "within80": bool(b["lo80"] <= actual <= b["hi80"])})
+    return {"drift_pct": round(float(np.expm1(mu) * 100), 2), "sigma_pct": round(sigma * 100, 2),
+            "origin": last_t.strftime("%Y-%m-%d"), "columns": ["date"] + list(Z), "points": pts,
+            "backtest": {"years_ahead": TEST_YEARS, "tests": tests,
+                         "coverage80": round(sum(t["within80"] for t in tests) / len(tests) * 100) if tests else None,
+                         "median_abs_error_pct": round(float(np.median([abs(t["error_pct"]) for t in tests])), 1) if tests else None}}
+
+
+forecasts = {}
+for sid in ["notes_value_total"] + [f"notes_value_{d}" for d in DENOMS]:
+    if sid in series:
+        f = forecast(series[sid]["points"])
+        if f:
+            forecasts[sid] = f
+            bt = f["backtest"]
+            print(f"  forecast {sid}: drift {f['drift_pct']}%/yr, sigma {f['sigma_pct']}%, 2030 {f['points'][-1][1:]}, "
+                  f"backtest coverage {bt['coverage80']}% of {len(bt['tests'])}, median error {bt['median_abs_error_pct']}%")
+
+# ---------------------------------------------------------------- international comparison (BIS CPMI)
+print("BIS international")
+international = None
+try:
+    manifest = json.loads((RAW / "manifest.json").read_text())
+    z = zipfile.ZipFile(RAW / manifest["bis_ct1"]["file"])
+    bis = pd.read_csv(z.open(next(n for n in z.namelist() if n.endswith(".csv"))), low_memory=False)
+    title = next(c for c in bis.columns if c.startswith("TITLE_TS"))
+    unit = next(c for c in bis.columns if c.startswith("UNIT_MEASURE"))
+    cty = next(c for c in bis.columns if c.startswith("REP_CTY"))
+    per = next(c for c in bis.columns if c.startswith("TIME_PERIOD"))
+    val = next(c for c in bis.columns if c.startswith("OBS_VALUE"))
+    cash = bis[bis[title].str.contains("Banknotes and coins", case=False, na=False)]
+    international = {}
+    for key, pattern in (("pct_gdp", "% of GDP"), ("per_capita_usd", "Per inhabitant")):
+        sub = cash[cash[unit].str.contains(pattern, regex=False, na=False)].dropna(subset=[val])
+        for c, grp in sub.groupby(cty):
+            code, name = [x.strip() for x in str(c).split(":", 1)]
+            e = international.setdefault(code, {"name": name})
+            e[key] = [[int(y), round(float(v), 2)] for y, v in grp.sort_values(per)[[per, val]].itertuples(index=False)]
+    print(f"  {len(international)} countries, latest year {max(p[-1][0] for e in international.values() for k, p in e.items() if k != 'name')}")
+except Exception as e:  # noqa: BLE001
+    print("  BIS data unavailable:", e)
+
 # ---------------------------------------------------------------- manual data
 with open(MANUAL / "consumer_payments_survey.csv", newline="") as fh:
     cps = [{k: (int(v) if k != "source" and v.strip().isdigit() else v) for k, v in r.items()} for r in csv.DictReader(fh)]
@@ -247,6 +339,8 @@ out = {
     },
     "cps": cps,
     "milestones": milestones,
+    "forecasts": forecasts,
+    "international": international,
 }
 OUT.write_text(json.dumps(out, separators=(",", ":")))
 print(f"wrote {OUT.relative_to(ROOT)}: {len(series)} series, {OUT.stat().st_size:,} bytes")

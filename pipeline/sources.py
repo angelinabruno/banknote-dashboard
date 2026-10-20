@@ -119,7 +119,8 @@ SOURCES = {
     # SEIFA 2021 by SA2 (aggregated to SA4, weighted by population)
     "seifa_sa2": {
         "url": "https://geo.abs.gov.au/arcgis/rest/services/Hosted/ABS_Socio_Economic_Indexes_for_Areas_SEIFA_by_2021_SA2/FeatureServer/0/query"
-               "?where=1%3D1&outFields=sa2_code_2021,sa2_name_2021,urp,irsd_score,irsd_aus_decile,irsad_score&returnGeometry=false&f=json",
+               "?where=1%3D1&outFields=sa2_code_2021,sa2_name_2021,urp,irsd_score,irsd_aus_decile,irsad_score&returnGeometry=false"
+               "&returnCentroid=true&outSR=4326&f=json",
         "kind": "json",
         "ext": ".json",
         "title": "ABS Socio-Economic Indexes for Areas (SEIFA) 2021, by SA2",
@@ -134,5 +135,13 @@ SOURCES = {
         "ext": ".xlsx",
         "title": "APRA Authorised deposit-taking institutions' points of presence (branches and ATMs)",
         "page": "https://www.apra.gov.au/authorised-deposit-taking-institutions-points-of-presence-statistics",
+    },
+    # International comparison: banknotes and coins in circulation, % of GDP (BIS CPMI "Red Book", annual)
+    "bis_ct1": {
+        "url": "https://data.bis.org/static/bulk/WS_CPMI_CT1_csv_flat.zip",
+        "kind": "zip",
+        "ext": ".zip",
+        "title": "BIS CPMI comparative tables: banknotes and coins in circulation by country",
+        "page": "https://data.bis.org/topics/CPMI_CT",
     },
 }

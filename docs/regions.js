@@ -68,9 +68,17 @@ function breaks(values) {
 const classOf = (v, br) => (v == null ? -1 : br.filter((b) => v >= b).length);
 
 // What a region's profile implies for cash, compared with Australia.
-function implications(r, nat, metrics) {
+function implications(r, nat, metrics, regions) {
   const has = (id) => metrics.some((m) => m.id === id) && r[id] != null && nat[id] != null;
   const out = [];
+  if (has("cvi")) {
+    const sorted = regions.map((x) => x.cvi).filter((v) => v != null).sort((a, b) => b - a);
+    const rank = sorted.indexOf(r.cvi) + 1;
+    const band = rank <= sorted.length / 5 ? "among the most vulnerable fifth of regions" : rank > (sorted.length * 4) / 5 ? "among the least vulnerable fifth of regions" : "in the middle of the range";
+    out.push(`Cash vulnerability index ${FORMAT.int(r.cvi)}, ${ordinal(rank)} of ${sorted.length}: ${band}. Reliance on cash scores ${FORMAT.int(r.reliance)} and the access gap ${FORMAT.int(r.access_gap)}.`);
+  }
+  if (has("pct_far_cash") && r.pct_far_cash >= 10)
+    out.push(`${FORMAT.pct(r.pct_far_cash)} of residents live more than 10 km from the nearest bank branch, Bank@Post outlet or bank ATM (${FORMAT.pct(nat.pct_far_cash)} nationally).`);
   if (has("pct_65plus") && r.pct_65plus > nat.pct_65plus * 1.15)
     out.push(`An older population (${FORMAT.pct(r.pct_65plus)} aged 65 and over, against ${FORMAT.pct(nat.pct_65plus)} nationally) points to above-average reliance on cash.`);
   if (has("median_hh_income") && r.median_hh_income < nat.median_hh_income * 0.9)
@@ -104,9 +112,9 @@ export async function regionsPanel(p) {
   const nat = R.national || {};
   const byCode = new Map(R.regions.map((r) => [r.code, r]));
   const feats = geo.features.filter((f) => byCode.has(f.properties.code));
-  let metric = metrics.find((m) => m.id === "pct_65plus") || metrics[0];
+  let metric = metrics.find((m) => m.id === "cvi") || metrics.find((m) => m.id === "pct_65plus") || metrics[0];
   let selected = null;
-  try { const saved = localStorage.getItem("bn-region-metric"); if (saved) metric = metrics.find((m) => m.id === saved) || metric; } catch { /* ignore */ }
+  try { const saved = localStorage.getItem("bn-region-metric-v2"); if (saved) metric = metrics.find((m) => m.id === saved) || metric; } catch { /* ignore */ }
 
   // ---- controls
   const select = h("select", { id: "rg-metric", "aria-label": "Statistic shown on the map" },
@@ -118,7 +126,7 @@ export async function regionsPanel(p) {
     STATES.map(([abbr, name]) => h("button", { type: "button", "data-state": name ?? "", "aria-pressed": String(!name), text: abbr })));
   const sw = (cls) => { const i = h("i", { class: `rg-dot ${cls}` }); return i; };
   const pointsToggle = h("label", { class: "rg-toggle" }, h("input", { type: "checkbox", id: "rg-points" }), " Show ",
-    sw("pt-branch"), " bank branches and ", sw("pt-atm"), " ATMs");
+    sw("pt-branch"), " bank branches, ", sw("pt-post"), " Bank@Post and ", sw("pt-atm"), " ATMs");
   p.append(h("div", { class: "rg-controls" },
     h("label", { for: "rg-metric", class: "rg-label" }, "Statistic ", select),
     h("span", { class: "rg-search" }, search, list),
@@ -135,6 +143,8 @@ export async function regionsPanel(p) {
     h("div", { class: "foot" }, h("span", { text: "Source: ABS 2021 Census, SEIFA 2021, ASGS 2021; APRA points of presence. Drag to pan, scroll or use the state buttons to zoom." })));
   const brief = h("aside", { class: "card brief", "aria-live": "polite" });
   p.append(h("div", { class: "rg-layout" }, mapCard, brief));
+  const scatterCard = h("div", { class: "card rg-scatter" });
+  if (metrics.some((m) => m.id === "cvi")) p.append(scatterCard);
   const rankCard = h("div", { class: "card rg-rank" });
   p.append(rankCard);
 
@@ -202,9 +212,10 @@ export async function regionsPanel(p) {
     const [vx, vy, vw, vh] = view;
     let n = 0;
     for (const [lon, lat, kind] of points) {
+      if (kind === "other") continue;
       const [x, y] = proj([lon, lat]);
       if (x < vx || x > vx + vw || y < vy || y > vy + vh) continue;
-      s("circle", { cx: x, cy: y, r: (kind === "branch" ? 4 : 3) / k, class: `pt-${kind}` }, gPts);
+      s("circle", { cx: x, cy: y, r: (kind === "atm" ? 3 : 4) / k, class: `pt-${kind}` }, gPts);
       if (++n > 6000) break;
     }
   }
@@ -280,7 +291,7 @@ export async function regionsPanel(p) {
     brief.replaceChildren(
       h("div", { class: "brief-head" }, h("div", {}, h("p", { class: "brief-kicker", text: "Regional brief" }), h("h3", { text: r.name }), h("p", { class: "card-sub", text: `${r.state}. ABS Statistical Area Level 4.` })), printBtn),
       h("h4", { text: "What it means for cash" }),
-      h("ul", { class: "brief-points" }, implications(r, nat, metrics).map((t) => h("li", { text: t }))),
+      h("ul", { class: "brief-points" }, implications(r, nat, metrics, R.regions).map((t) => h("li", { text: t }))),
       h("h4", { text: "Profile" }),
       h("div", { class: "table-wrap brief-table" }, h("table", { class: "data" },
         h("thead", {}, h("tr", {}, ["", "Region", "Australia", "Rank (highest = 1st)"].map((t) => h("th", { scope: "col", text: t })))),
@@ -290,6 +301,62 @@ export async function regionsPanel(p) {
   function renderEmptyBrief() {
     brief.replaceChildren(h("p", { class: "brief-kicker", text: "Regional brief" }), h("h3", { text: "Pick a region" }),
       h("p", { class: "card-sub", text: "Click the map or search for a place, such as Cairns, to see how it compares with Australia and what that means for cash use and access. You can print the brief to take on a visit." }));
+  }
+
+  // ---- who would be hit hardest: reliance against access gap
+  function renderScatter() {
+    const pts = R.regions.filter((r) => r.reliance != null && r.access_gap != null);
+    if (!pts.length) return;
+    const W = 640, H = 420, m = { l: 48, r: 16, t: 16, b: 44 };
+    const x = (v) => m.l + (v / 100) * (W - m.l - m.r), y = (v) => H - m.b - (v / 100) * (H - m.t - m.b);
+    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Regions plotted by cash reliance and access gap" });
+    s("rect", { x: x(50), y: y(100), width: x(100) - x(50), height: y(50) - y(100), class: "rg-quad" }, svg);
+    for (const v of [0, 25, 50, 75, 100]) {
+      s("line", { x1: x(v), x2: x(v), y1: y(0), y2: y(100), class: v === 50 ? "baseline" : "gridline" }, svg);
+      s("line", { x1: x(0), x2: x(100), y1: y(v), y2: y(v), class: v === 50 ? "baseline" : "gridline" }, svg);
+      Object.assign(s("text", { x: x(v), y: H - m.b + 16, "text-anchor": "middle", class: "tick" }, svg), { textContent: v });
+      Object.assign(s("text", { x: m.l - 8, y: y(v) + 4, "text-anchor": "end", class: "tick" }, svg), { textContent: v });
+    }
+    Object.assign(s("text", { x: (x(0) + x(100)) / 2, y: H - 6, "text-anchor": "middle", class: "axis-title" }, svg), { textContent: "Cash reliance score →" });
+    const yt = s("text", { x: 14, y: (y(0) + y(100)) / 2, "text-anchor": "middle", class: "axis-title", transform: `rotate(-90 14 ${(y(0) + y(100)) / 2})` }, svg);
+    yt.textContent = "Access gap score →";
+    Object.assign(s("text", { x: x(98), y: y(97), "text-anchor": "end", class: "rg-quad-label" }, svg), { textContent: "Relies on cash and harder to reach" });
+    const maxPop = Math.max(...pts.map((r) => r.population || 0));
+    const top = new Set([...pts].sort((a, b) => b.cvi - a.cvi).slice(0, 6).map((r) => r.code));
+    const stip = h("div", { class: "tooltip", role: "status" });
+    const placed = [];
+    const labelAt = (lx, ly, text) => {   // nudge labels down until they don't overlap earlier ones
+      const w = text.length * 6.2;
+      while (placed.some((b) => lx < b.x + b.w && lx + w > b.x && Math.abs(ly - b.y) < 13)) ly += 13;
+      placed.push({ x: lx, y: ly, w });
+      Object.assign(s("text", { x: lx, y: ly, class: "rg-dot-label" }, svg), { textContent: text });
+    };
+    for (const r of [...pts].sort((a, b) => (b.population || 0) - (a.population || 0))) {
+      const c = s("circle", { cx: x(r.reliance), cy: y(r.access_gap), r: 3 + 9 * Math.sqrt((r.population || 0) / maxPop), class: `rg-dotp${top.has(r.code) ? " hot" : ""}${r.code === selected ? " sel" : ""}`, tabindex: "0", "data-code": r.code }, svg);
+      const show = (e) => {
+        stip.replaceChildren(h("div", { class: "t-head", text: `${r.name}, ${r.state}` }),
+          h("div", { class: "t-row" }, h("b", { text: FORMAT.int(r.cvi) }), h("span", { text: "vulnerability index" })),
+          h("div", { class: "t-row" }, h("b", { text: FORMAT.int(r.reliance) }), h("span", { text: "reliance" })),
+          h("div", { class: "t-row" }, h("b", { text: FORMAT.int(r.access_gap) }), h("span", { text: "access gap" })));
+        const box = scatterCard.querySelector(".chart").getBoundingClientRect(), cb = c.getBoundingClientRect();
+        stip.style.display = "block";
+        let left = cb.right - box.left + 8;
+        if (left + stip.offsetWidth > box.width) left = cb.left - box.left - stip.offsetWidth - 8;
+        stip.style.left = `${Math.max(0, left)}px`; stip.style.top = `${Math.max(0, cb.top - box.top - 10)}px`;
+      };
+      c.addEventListener("pointerenter", show); c.addEventListener("focus", show);
+      c.addEventListener("pointerleave", () => { stip.style.display = "none"; }); c.addEventListener("blur", () => { stip.style.display = "none"; });
+      const go = () => { select_(r.code); mapCard.scrollIntoView({ behavior: "smooth", block: "start" }); };
+      c.addEventListener("click", go); c.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    }
+    for (const r of [...pts].filter((r) => top.has(r.code)).sort((a, b) => b.access_gap - a.access_gap)) {
+      const lx = Math.min(x(r.reliance) + 8, W - m.r - r.name.length * 6.2);
+      labelAt(lx, y(r.access_gap) - 8, r.name);
+    }
+    const box = h("div", { class: "chart rg-scatter-box" }, svg, stip);
+    scatterCard.replaceChildren(h("h3", { text: "Who would be hit hardest by losing cash services" }),
+      h("p", { class: "card-sub", text: "Each circle is a region, sized by population. Regions to the top right rely on cash more and are further from it. Labelled: the six highest on the cash vulnerability index. Select a circle to open its brief." }),
+      box, h("div", { class: "foot" }, h("span", { text: "Source: ABS 2021 Census, SEIFA 2021; APRA points of presence. Method in Sources and methods." })));
   }
 
   // ---- ranking table (the map's table view)
@@ -312,7 +379,7 @@ export async function regionsPanel(p) {
   // ---- wire controls
   select.addEventListener("change", () => {
     metric = metrics.find((m) => m.id === select.value);
-    try { localStorage.setItem("bn-region-metric", metric.id); } catch { /* ignore */ }
+    try { localStorage.setItem("bn-region-metric-v2", metric.id); } catch { /* ignore */ }
     paint();
   });
   const pick = () => {
@@ -336,6 +403,7 @@ export async function regionsPanel(p) {
   window.addEventListener("afterprint", () => document.body.classList.remove("print-brief"));
 
   paint();
+  renderScatter();
   renderEmptyBrief();
   const fromHash = location.hash.match(/^#regions\/(\w+)/)?.[1];
   if (fromHash && byCode.has(fromHash)) select_(fromHash);
